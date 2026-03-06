@@ -1,0 +1,25 @@
+central_eto/
+  data/
+    raw/          # snapshots pequenos (parquet/csv), se permitido
+    processed/
+  notebooks/
+    01_pedidos_eda.ipynb
+    02_notas_eda.ipynb
+    03_inadimplencia_eda.ipynb
+    04_cliente_mes_base.ipynb
+  src/
+    __init__.py
+    config.py
+    db.py         # conexão + queries
+    extract.py    # funções de extração
+    features.py
+    models.py
+    evaluation.py
+  queries/
+    notas.sql
+    makerpedidos.sql
+    clientes.sql
+  requirements.txt
+  .env (não comita)
+  .gitignore
+  README.md 
