@@ -11,8 +11,11 @@ def sanity_check(df, value_col=None, date_col=None, id_cols=None):
     print(df.duplicated().sum())
 
     if value_col:
-        print("\nNegativos em", value_col, ":",
-              (df[value_col] < 0).sum())
+        cols = [value_col] if isinstance(value_col, str) else value_col
+        negativos = {c: (df[c].dropna() < 0).sum() for c in cols}
+        print("\nNegativos em", value_col, ":")
+        for c, n in negativos.items():
+            print(f"  {c}: {n}")
 
     if date_col:
         print("\nDatas:", df[date_col].min(), df[date_col].max())
