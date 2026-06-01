@@ -98,8 +98,8 @@ Granularidade: um registro por cliente. Salva em `data/processed/cliente_fidelid
 | Feature | Descrição |
 |---|---|
 | `total_meses_ativos` | Meses com pelo menos 1 pedido |
-| `intervalo_medio` | Média de dias entre pedidos consecutivos |
-| `max_intervalo` | Maior intervalo registrado |
+| `intervalo_medio` | Média de meses entre pedidos consecutivos (calculado sobre `meses_desde_ultimo`) |
+| `max_intervalo` | Maior intervalo registrado (em meses) |
 | `total_valor_historico` | Faturamento acumulado |
 | `ticket_medio_geral` | Ticket médio histórico |
 | `valor_ultimo_mes` | Faturamento no último mês ativo |
