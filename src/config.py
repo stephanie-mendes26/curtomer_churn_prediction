@@ -12,7 +12,7 @@ INICIO   = "2023-01-01"                 # início da janela de análise
 
 # === Splits para modelagem ===
 CUTOFF_TREINO   = pd.Timestamp("2024-12-31")
-CUTOFF_TESTE    = pd.Timestamp("2025-12-31")
+CUTOFF_TESTE    = pd.Timestamp("2025-11-30")
 HORIZONTE_MESES = 3                     # meses de janela de previsão
 
 # === Thresholds — categoria_pedido (pedidos únicos por mês) ===

@@ -1,0 +1,204 @@
+DICIONÁRIO DE VARIÁVEIS — MODELO DE CHURN
+==========================================
+Projeto: Previsão de Churn B2B
+Data de referência: DATA_REF = 2026-05-01
+Janela de dados: 2023-01 até CUTOFF_TREINO (2024-12)
+Target: churn_h3 — cliente não pediu nada nos 3 meses após o CUTOFF
+
+
+─────────────────────────────────────────
+TARGET
+─────────────────────────────────────────
+
+churn_h3
+  O que é: variável que o modelo tenta prever.
+  Conta: pegamos os 3 meses após o CUTOFF (jan, fev, mar/2025). Se o cliente
+         fez pelo menos 1 pedido nesse período → 0 (ficou ativo). Se não fez
+         nenhum pedido → 1 (churnou).
+  Origem: 03_base_master.ipynb, cruzamento entre cm_feat e cm_outcome.
+
+
+─────────────────────────────────────────
+IDENTIFICADORES (fora do modelo)
+─────────────────────────────────────────
+
+CLIENTE
+  O que é: ID numérico do cliente no sistema.
+
+NOME
+  O que é: razão social da empresa.
+
+
+─────────────────────────────────────────
+FEATURES — COMPORTAMENTO MENSAL
+(calculadas sobre cliente_mes.parquet, janela pré-CUTOFF)
+─────────────────────────────────────────
+
+n_meses_ativos
+  O que é: quantos meses o cliente teve pelo menos 1 pedido na janela.
+  Conta: groupby("CLIENTE").count() sobre as linhas de cliente_mes na janela pré-CUTOFF.
+  Intuição: mede senioridade e presença. Cliente que pediu em 20 dos 23 meses
+            é muito diferente de quem pediu só em 2.
+
+total_pedidos
+  O que é: soma de pedidos únicos do cliente em toda a janela.
+  Conta: groupby("CLIENTE").sum(total_pedidos) sobre cliente_mes pré-CUTOFF.
+  Intuição: volume histórico total — clientes de alto volume têm perfis distintos.
+
+total_valor
+  O que é: faturamento total do cliente na janela.
+  Conta: groupby("CLIENTE").sum(total_valor) sobre cliente_mes pré-CUTOFF.
+  Intuição: semelhante ao total_pedidos, mas em R$. Captura clientes de alto valor.
+
+media_pedidos_mes
+  O que é: média de pedidos por mês ativo.
+  Conta: total_pedidos / n_meses_ativos.
+  Intuição: normaliza o volume pelo tempo ativo. Um cliente que pediu 20 vezes
+            em 2 meses é muito diferente de um que pediu 20 vezes em 20 meses.
+
+ticket_medio
+  O que é: valor médio por pedido.
+  Conta: total_valor / total_pedidos (média calculada no agrupamento).
+  Intuição: perfil de gasto por pedido. Mostrou correlação muito baixa com churn
+            na análise — o modelo provavelmente vai ignorar essa feature.
+
+itens_por_pedido
+  O que é: média de itens por pedido.
+  Conta: groupby("CLIENTE").mean(itens_por_pedido) sobre cliente_mes pré-CUTOFF.
+  Intuição: clientes que pedem muitos itens por pedido têm comportamento distinto.
+            Pearson baixo, mas MI moderado — sinal não-linear.
+
+categoria_pedido
+  O que é: perfil predominante do cliente em volume de pedidos mensais.
+  Conta: moda de categoria_pedido na janela pré-CUTOFF.
+         Thresholds: baixo ≤ 2 pedidos/mês | medio 3-5 | alto 6-19 | premium ≥ 20.
+         Codificação ordinal: baixo=0, medio=1, alto=2, premium=3.
+  Intuição: classifica o tipo de cliente pelo volume. Mostrou sinal fraco —
+            as features numéricas já capturam essa informação com mais detalhe.
+  Status: CANDIDATA A REMOÇÃO.
+
+cv_pedidos
+  O que é: coeficiente de variação dos pedidos mensais (irregularidade).
+  Conta: std(total_pedidos por mês) / mean(total_pedidos por mês), calculado
+         no agrupamento por cliente. NaN preenchido com 0 (clientes com 1 mês ativo).
+  Intuição: mede consistência. cv=0.1 é um cliente que pede a mesma quantidade
+            todo mês. cv=0.9 é um cliente caótico, ora some ora aparece com pedidão.
+            Clientes irregulares tendem mais ao churn.
+
+meses_sem_pedido_pre
+  O que é: quantos meses o cliente ficou sem pedir antes do CUTOFF.
+  Conta: CUTOFF_PERIOD.ordinal - ultimo_mes_ativo.ordinal (diferença em meses).
+  Intuição: recência. É a feature mais forte do modelo (Pearson ~0.62). Se o
+            cliente já estava sumido antes do CUTOFF, alta chance de continuar sumido.
+
+razao_atividade
+  O que é: proporção de meses ativos sobre a janela total disponível.
+  Conta: n_meses_ativos / 23 (23 meses = jan/2023 a dez/2024).
+  Intuição: normaliza a presença pelo tempo total. Mas como é uma transformação
+            linear direta de n_meses_ativos (dividir por constante), não adiciona
+            informação nova.
+  Status: CANDIDATA A REMOÇÃO (redundante com n_meses_ativos).
+
+
+─────────────────────────────────────────
+FEATURES — PADRÃO DE INTERVALOS
+(recalculadas sobre cm_feat pré-CUTOFF para evitar leakage)
+─────────────────────────────────────────
+
+intervalo_medio
+  O que é: média de meses entre pedidos consecutivos na janela pré-CUTOFF.
+  Conta: para cada cliente, ordena os meses ativos e calcula a diferença entre
+         meses consecutivos usando Period.ordinal. Tira a média dessas diferenças.
+         NaN (cliente com só 1 mês ativo) preenchido com 2 × max_observado,
+         sinalizando "intervalo desconhecido/grande".
+  Intuição: frequência estrutural do cliente. intervalo_medio=1 pede todo mês.
+            intervalo_medio=4 pede a cada 4 meses — perfil sazonal, mais frágil.
+
+max_intervalo
+  O que é: maior intervalo já registrado entre dois pedidos consecutivos na janela.
+  Conta: max() das diferenças entre meses ativos consecutivos (Period.ordinal).
+  Intuição: captura o "pior episódio" de sumiço histórico. Um cliente que uma vez
+            ficou 8 meses sem pedir tem comportamento diferente de um que nunca
+            passou de 2 — mesmo que hoje tenham o mesmo intervalo_medio.
+            Pearson baixo mas MI moderado: sinal não-linear.
+
+n_intervalos
+  O que é: quantidade de intervalos calculados na janela pré-CUTOFF.
+  Conta: len(diferenças entre meses ativos) = n_meses_ativos - 1 para clientes
+         com pedidos consecutivos. Calculado direto do cm_feat pré-CUTOFF.
+  Intuição: proxy de senioridade. n_intervalos=20 é um cliente com longa
+            história de compras na janela. n_intervalos=1 é cliente novo ou
+            que comprou em apenas 2 meses.
+  Nota: anteriormente era puxado do cliente_fidelidade (histórico completo até
+        DATA_REF), o que causava leakage. Corrigido em 03_base_master.ipynb para
+        usar apenas dados pré-CUTOFF.
+
+categoria_cliente
+  O que é: perfil geral do cliente — moda de categoria_pedido na janela pré-CUTOFF.
+  Conta: moda de categoria_pedido calculada sobre cm_feat.
+         Codificação ordinal: baixo=0, medio=1, alto=2, premium=3.
+  Intuição: diferente de categoria_pedido (que é a última moda), esta captura
+            o perfil histórico predominante do cliente na janela inteira.
+
+
+─────────────────────────────────────────
+FEATURES — TENDÊNCIA DE PORTFÓLIO
+(calculadas sobre cliente_item_tendencia.parquet)
+─────────────────────────────────────────
+
+slope_portfolio_medio
+  O que é: média das tendências lineares de todos os itens que o cliente compra.
+  Conta: para cada par (cliente, item), aplica np.polyfit(meses, quantidades, 1)
+         para obter o slope (inclinação da reta). Agrega por cliente tirando a média
+         dos slopes de todos os seus itens. NaN preenchido com 0 (sem histórico).
+  Intuição: detecta migração gradual para concorrente. slope=-0.5 significa que
+            em média cada item está caindo 0.5 unidades por mês. Pearson baixo
+            (~0.10) mas MI alto (~0.22) — relação não-linear importante.
+
+pct_itens_queda
+  O que é: porcentagem de itens do portfólio com tendência de queda.
+  Conta: proporção de itens com slope < 0, calculada por cliente.
+         pct_itens_queda = (slope < 0).sum() / total_itens.
+         NaN preenchido com 0.
+  Intuição: complementa slope_portfolio_medio. pct=0.6 significa que 60% dos
+            itens que o cliente compra estão diminuindo — sinal forte de saída
+            gradual. Sinal identificado pelo cliente como importante.
+
+n_itens_portfolio
+  O que é: número de itens distintos comprados pelo cliente no histórico.
+  Conta: contagem de linhas únicas de SERVICO por cliente em cliente_item_tendencia.
+  Intuição: clientes com portfólio amplo (ex: 197 itens) são mais integrados
+            à operação da empresa. Clientes que compram só 2-3 itens são mais
+            fáceis de trocar por concorrente.
+
+
+─────────────────────────────────────────
+FEATURE — FINANCEIRO
+─────────────────────────────────────────
+
+DIASINADIMPLENTE
+  O que é: dias em atraso no momento da extração dos dados do banco.
+  Origem: tabela de clientes via query base_clientes.sql.
+  Intuição: hipótese de que inadimplência pode preceder churn. Na análise mostrou
+            sinal fraco (Pearson ~0.12, MI ~0.07) — inadimplência e saída não
+            parecem fortemente correlacionadas nessa base.
+
+
+─────────────────────────────────────────
+DECISÕES DE ENCODING
+─────────────────────────────────────────
+
+categoria_pedido e categoria_cliente foram codificadas ordinalmente (não dummies)
+porque são variáveis com ordem natural: baixo < medio < alto < premium.
+Encoding ordinal preserva essa ordem e é mais adequado para modelos tree-based.
+
+Mapeamento: baixo=0, medio=1, alto=2, premium=3
+
+
+─────────────────────────────────────────
+FEATURES CANDIDATAS A REMOÇÃO
+─────────────────────────────────────────
+
+razao_atividade  → transformação linear de n_meses_ativos, zero informação nova
+ticket_medio     → Pearson 0.05, MI 0.01 — praticamente ruído
+categoria_pedido → sinal muito fraco, informação já capturada pelas features numéricas
