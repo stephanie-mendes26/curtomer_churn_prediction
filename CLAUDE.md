@@ -13,37 +13,27 @@ CENTRX/
 ├── .env                        # credenciais de banco (nunca commitar)
 ├── pyvenv.cfg
 ├── estrutura.txt
-├── variaveis.txt               # dicionário completo das features do modelo
-├── threshold_churn             # referência de thresholds definidos
 ├── data/
-│   └── processed/
-│       ├── cliente_mes.parquet
-│       ├── cliente_fidelidade.parquet
-│       ├── cliente_item_tendencia.parquet
-│       ├── clientes_alerta.xlsx
-│       ├── df_master.parquet
-│       ├── df_model.parquet
-│       ├── df_model_treino.parquet
-│       └── df_model_teste.parquet
+│   └── processed/              # outputs dos notebooks
+├── docs/
+│   ├── estrutura.txt           # árvore detalhada do projeto
+│   ├── variaveis.txt           # dicionário completo das features
+│   └── threshold_churn         # referência de thresholds
 ├── notebooks/
 │   ├── 01_pedidos_eda.ipynb    # CONCLUÍDO
-│   ├── 02_clientes_eda.ipynb   # PAUSADO (variáveis não confiáveis)
+│   ├── 02_clientes_eda.ipynb   # PAUSADO
 │   ├── 02_itens_eda.ipynb      # CONCLUÍDO
 │   ├── 03_base_master.ipynb    # CONCLUÍDO
 │   └── 04_modelo.ipynb         # EM ANDAMENTO
 ├── queries/
-│   ├── base_pedidos.sql
-│   ├── base_clientes.sql
-│   ├── base_clientes_enriquecida.sql
-│   ├── profiling_pedidos.sql
-│   └── profiling_clientes.sql
+├── reports/
+│   ├── apresentacao_churn.pptx
+│   └── gerar_apresentacao.py
 └── src/
-    ├── __init__.py
-    ├── config.py               # constantes centralizadas (DATA_REF, CUTOFFs, thresholds, paleta)
-    ├── db.py                   # conexão com banco via db.get_data(sql) e db.test_connection()
-    ├── features_EDA_pedidos.py # contém make_cliente_mes()
-    ├── sanity_check.py         # contém sanity_check()
-    └── utils.py
+    ├── config.py               # constantes centralizadas
+    ├── db.py                   # conexão com banco
+    ├── features_EDA_pedidos.py
+    └── sanity_check.py
 ```
 
 ---
@@ -61,7 +51,7 @@ CENTRX/
 - **Parquet:** outputs salvos em `data/processed/` sempre com `index=False`
 - **Nunca commitar `.env`**
 - **PROJECT_ROOT nos notebooks:** usar detecção dinâmica `next(p for p in [Path.cwd()] + list(Path.cwd().parents) if (p / "src").exists())` — nunca hardcodar caminho absoluto
-- **`estrutura.txt` deve ser atualizado sempre** que um arquivo for criado, renomeado, removido ou mudar de status — é a referência de navegação do projeto
+- **`docs/estrutura.txt` deve ser atualizado sempre** que um arquivo for criado, renomeado, removido ou mudar de status — é a referência de navegação do projeto
 - **`README.md` deve ser atualizado sempre** que: um notebook mudar de status, os resultados do modelo mudarem, uma decisão técnica relevante for tomada, ou uma seção nova for concluída
 
 ---

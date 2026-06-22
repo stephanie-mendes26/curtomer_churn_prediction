@@ -94,15 +94,18 @@ Banco de dados
 central_eto/
 ├── CLAUDE.md                   # instruções do projeto para o assistente
 ├── README.md                   # este arquivo
-├── estrutura.txt               # árvore detalhada de todos os arquivos
-├── variaveis.txt               # dicionário completo das features
 ├── requirements.txt
 ├── .env                        # credenciais (nunca commitar)
-├── apresentacao_churn.pptx     # slides para o cliente (não técnico)
-├── gerar_apresentacao.py       # script para regenerar o .pptx
 ├── data/processed/             # outputs dos notebooks
+├── docs/
+│   ├── estrutura.txt           # árvore detalhada de todos os arquivos
+│   ├── variaveis.txt           # dicionário completo das features
+│   └── threshold_churn         # referência de thresholds
 ├── notebooks/                  # análise e modelagem
 ├── queries/                    # SQL de extração
+├── reports/
+│   ├── apresentacao_churn.pptx # slides para o cliente (não técnico)
+│   └── gerar_apresentacao.py   # script para regenerar o .pptx
 └── src/                        # módulos reutilizáveis
     ├── config.py               # constantes centralizadas
     ├── db.py                   # conexão com banco
@@ -110,7 +113,7 @@ central_eto/
     └── sanity_check.py         # validação de dataframes
 ```
 
-> Veja [`estrutura.txt`](estrutura.txt) para a árvore completa com descrição de cada arquivo.
+> Veja [`docs/estrutura.txt`](docs/estrutura.txt) para a árvore completa com descrição de cada arquivo.
 
 ---
 

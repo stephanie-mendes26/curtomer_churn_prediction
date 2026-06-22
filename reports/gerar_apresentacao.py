@@ -1,7 +1,7 @@
 """
 Gera a apresentação de churn prediction em .pptx para o cliente (não técnico).
-Executar: python gerar_apresentacao.py
-Output:   apresentacao_churn.pptx
+Executar: python reports/gerar_apresentacao.py   (da raiz do projeto)
+Output:   reports/apresentacao_churn.pptx
 """
 
 from pptx import Presentation
@@ -376,7 +376,8 @@ add_textbox(s,
     italic=True)
 
 # ── Salvar ────────────────────────────────────────────────────────────────────
-output = "apresentacao_churn.pptx"
+from pathlib import Path
+output = Path(__file__).parent / "apresentacao_churn.pptx"
 prs.save(output)
 print(f"OK: Apresentacao salva em: {output}")
 print(f"  Slides: {len(prs.slides)}")

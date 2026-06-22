@@ -1,10 +1,6 @@
 central_eto/
 ├── CLAUDE.md                            # instruções do projeto para o assistente
-├── estrutura.txt                        # este arquivo — atualizar sempre que mudar algo
-├── variaveis.txt                        # dicionário completo das features do modelo
-├── threshold_churn                      # referência dos thresholds de churn por categoria
-├── apresentacao_churn.pptx              # apresentação para o cliente (gerada por gerar_apresentacao.py)
-├── gerar_apresentacao.py                # script para (re)gerar o .pptx
+├── README.md                            # visão geral do projeto com badges de status
 ├── requirements.txt                     # dependências do projeto
 ├── .env                                 # credenciais de banco (nunca commitar)
 ├── .gitignore
@@ -20,6 +16,11 @@ central_eto/
 │       ├── df_model_treino.parquet      # dataset de treino com features + target (gerado por 03_base_master)
 │       └── df_model_teste.parquet       # dataset de teste com features + target (gerado por 03_base_master)
 │
+├── docs/
+│   ├── estrutura.txt                    # este arquivo — atualizar sempre que mudar algo
+│   ├── variaveis.txt                    # dicionário completo das features do modelo
+│   └── threshold_churn                  # referência dos thresholds de churn por categoria
+│
 ├── notebooks/
 │   ├── 01_pedidos_eda.ipynb             # CONCLUÍDO — EDA de pedidos, cria cliente_mes e cliente_fidelidade
 │   ├── 02_clientes_eda.ipynb            # PAUSADO — EDA de cadastro de clientes (variáveis não confiáveis)
@@ -33,6 +34,10 @@ central_eto/
 │   ├── base_clientes_enriquecida.sql    # versão enriquecida com mais variáveis cadastrais
 │   ├── profiling_pedidos.sql            # queries de profiling para EDA de pedidos
 │   └── profiling_clientes.sql           # queries de profiling para EDA de clientes
+│
+├── reports/
+│   ├── apresentacao_churn.pptx          # apresentação para o cliente (não técnico)
+│   └── gerar_apresentacao.py            # script para (re)gerar o .pptx
 │
 └── src/
     ├── __init__.py
