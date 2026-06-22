@@ -62,6 +62,7 @@ CENTRX/
 - **Nunca commitar `.env`**
 - **PROJECT_ROOT nos notebooks:** usar detecção dinâmica `next(p for p in [Path.cwd()] + list(Path.cwd().parents) if (p / "src").exists())` — nunca hardcodar caminho absoluto
 - **`estrutura.txt` deve ser atualizado sempre** que um arquivo for criado, renomeado, removido ou mudar de status — é a referência de navegação do projeto
+- **`README.md` deve ser atualizado sempre** que: um notebook mudar de status, os resultados do modelo mudarem, uma decisão técnica relevante for tomada, ou uma seção nova for concluída
 
 ---
 
