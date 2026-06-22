@@ -50,7 +50,7 @@ CENTRX/
 
 ## Convenções do Projeto
 
-- **Python environment:** sempre usar o `.venv` local (`pyvenv.cfg` na raiz)
+- **Python environment:** sempre usar o `.venv` dentro de `c:\Users\carva\OneDrive\Área de Trabalho\central_eto\.venv` — este é o projeto ativo. Existe uma cópia antiga em `C:\Users\carva\central_eto` com `data/processed/` **vazia** — nunca usar esse kernel.
 - **Banco de dados:** acessado via `src/db.py` — usar `db.get_data(sql)` para queries, `db.test_connection()` para validar conexão
 - **Constantes centralizadas em `src/config.py`:** importar de lá, nunca redefinir inline
 - **Data de referência fixa:** `DATA_REF = pd.Timestamp("2026-05-01")` — fim dos dados disponíveis
@@ -60,6 +60,8 @@ CENTRX/
 - **Valores negativos em VL_SERVICO:** tratados com `neg_policy="clip0"` (zerados, não removidos)
 - **Parquet:** outputs salvos em `data/processed/` sempre com `index=False`
 - **Nunca commitar `.env`**
+- **PROJECT_ROOT nos notebooks:** usar detecção dinâmica `next(p for p in [Path.cwd()] + list(Path.cwd().parents) if (p / "src").exists())` — nunca hardcodar caminho absoluto
+- **`estrutura.txt` deve ser atualizado sempre** que um arquivo for criado, renomeado, removido ou mudar de status — é a referência de navegação do projeto
 
 ---
 
@@ -169,11 +171,16 @@ Granularidade: um registro por cliente. Dataset final para modelagem.
 | `slope_portfolio_medio` | Média dos slopes de todos os itens do cliente |
 | `pct_itens_queda` | % de itens com slope < 0 |
 | `n_itens_portfolio` | Itens distintos comprados na janela |
+| `sem_historico_itens` | 1 se o cliente não tem nenhum dado em `cliente_item_tendencia` (NaN original em pct_itens_queda) |
 | `DIASINADIMPLENTE` | Dias em atraso (sinal fraco, Pearson ~0.12) |
 
 **Splits:**
 - **Treino:** features calculadas até `CUTOFF_TREINO = 2024-12`, target = sem pedido em jan–mar/2025
 - **Teste:** features calculadas até `CUTOFF_TESTE = 2025-11`, target = sem pedido em dez/2025–fev/2026
+
+**Imputação de NaN (aplicada em `03_base_master.ipynb` e replicada em `04_modelo.ipynb` Seção 8):**
+- `intervalo_medio` → `2 × max_treino` (sinal de intervalo muito longo; constante do treino aplicada no teste para evitar leakage)
+- `pct_itens_queda` / `slope_portfolio_medio` → `0` após criação de `sem_historico_itens`
 
 ---
 
@@ -199,45 +206,45 @@ Granularidade: um registro por cliente. Dataset final para modelagem.
 - Feature `tendencia_slope` via `np.polyfit` por (cliente, item)
 - Feature `var_pct_ultimo` — variação percentual mês a mês
 - Output: `cliente_item_tendencia.parquet`
+- **Correção aplicada:** `PROJECT_ROOT` era hardcoded para `C:\Users\carva\central_eto` (cópia antiga); substituído por detecção dinâmica
 
-### `03_base_master.ipynb` — CONCLUÍDO
+### `03_base_master.ipynb` — CONCLUÍDO (re-executar após adicionar `sem_historico_itens`)
 - Construção do dataset de modelagem com split temporal
-- Target `churn` definido: 1 = nenhum pedido nos 3 meses após CUTOFF
+- Target `churn` definido com janela personalizada por categoria (não horizonte fixo de 3 meses para todos)
 - Features recalculadas sobre dados pré-CUTOFF para evitar leakage
-- Correção de leakage: `n_intervalos`, `intervalo_medio`, `max_intervalo` e `categoria_cliente` calculados sobre `cm_feat` (pré-CUTOFF), não sobre `cliente_fidelidade`
-- Tratamento de NaN: `intervalo_medio` NaN → 2 × max observado no treino (constante salva para aplicar no teste)
-- Outputs: `df_model_treino.parquet` e `df_model_teste.parquet`
+- Correção de leakage: join do treino usa `df_target[["CLIENTE", "churn"]]` apenas — sem colunas pós-CUTOFF
+- Tratamento de NaN: `intervalo_medio` → 2 × max_treino; `pct_itens_queda` / `slope_portfolio_medio` → 0
+- **Nova feature adicionada:** `sem_historico_itens` criada ANTES do fillna(0) em ambos os splits — distingue 0-real de 0-imputado
+- Outputs: `df_model_treino.parquet` (610 clientes, 36.2% churn) e `df_model_teste.parquet` (724 clientes, 49.0% churn)
 
-### `04_modelo.ipynb` — EM ANDAMENTO
+### `04_modelo.ipynb` — EM ANDAMENTO (Seção 9 em execução, Seção 10 pendente)
 
-> **Atenção:** o `03_base_master.ipynb` foi corrigido (leakage no join do treino) mas os parquets ainda não foram re-gerados. **Re-executar o 03 antes de rodar o 04.**
-
-**Seções escritas (código no notebook, aguardando re-execução após correção do master):**
+**Seções concluídas:**
 
 - **Seção 1** — Setup, carga dos parquets, `preparar_xy()`
 - **Seção 2** — EDA: Pearson + MI com target, boxplots top features, heatmap entre features
-  - `HIPOTESES_BAIXO_SINAL`: features com Pearson < 0.10 E MI < 0.05 (hipótese, confirmada pelo SHAP)
-  - `HIPOTESES_REDUNDANCIA`: pares com corr > 0.80, remove a de menor score combinado (hipótese)
-- **Seção 3** — Análise exploratória de features
-  - Remove `razao_atividade` agora (certeza — transformação linear de `n_meses_ativos`)
-  - Gera `X_train_clean` / `X_test_clean`
-- **Seção 4** — Distribuição de classes: 36.2% treino, 49.0% teste
-  - Sem SMOTE, sem `scale_pos_weight` fixo
-  - `scale_pos_weight` vai como hiperparâmetro no Optuna (Seção 8)
-  - Shift 36%→49% é distribuição real (clientes novos de 2025), tratado por calibração de threshold no teste
-- **Seção 5** — Baseline
-  - 5.1 DummyClassifier (chão absoluto)
-  - 5.2 VIF via sklearn (sem statsmodels): `1 / (1 - R²)`, gera `EXCLUIR_LOGISTICA`
-  - 5.3 Logistic Regression com StandardScaler + `class_weight="balanced"` + plot de coeficientes
-- **Seção 6** — Comparação de modelos tree-based (todos com parâmetros default + early stopping)
-  - XGBoost, LightGBM, Random Forest
-  - Tabela comparativa AUC-ROC + AUC-PR; vencedor segue para Optuna
+- **Seção 3** — Remove `razao_atividade` (certeza); gera `X_train_clean` / `X_test_clean`
+- **Seção 4** — Distribuição de classes: 36.2% treino, 49.0% teste; justificativa para não usar SMOTE
+- **Seção 5** — Baseline: DummyClassifier + VIF + Logistic Regression
+- **Seção 6** — Comparação tree-based:
 
-**Seções ainda não escritas:**
+  | Modelo | AUC-ROC | AUC-PR |
+  |---|---|---|
+  | LightGBM | **0.9140** | 0.9022 |
+  | XGBoost | 0.9108 | **0.9034** |
+  | Random Forest | 0.9071 | 0.8980 |
+  | Logistic Regression | 0.8789 | 0.8693 |
 
-- **Seção 7** — Threshold de decisão (curva PR no teste, F-beta, justificativa de negócio)
-- **Seção 8** — Optuna: `scale_pos_weight` como hiperparâmetro, otimizar AUC-PR, StratifiedKFold(5)
-- **Seção 9** — SHAP: beeswarm, waterfall de casos, dependence plot → decisão final sobre hipóteses
+- **Seção 7** — Threshold via F2 (recall pesa 2× — FN mais caro em B2B); curva PR + tabela de sweep + matriz de confusão
+- **Seção 8** — Optuna (100 trials, StratifiedKFold 5, otimiza AUC-PR): ganho de +0.0027 em AUC-PR, ROC -0.0029 — **modelo tunado descartado** (ganho irrelevante; threshold F2-ótimo em 0.059 gera 65% da base como alerta, inoperacionalizável)
+- **Seção 9** — SHAP em execução: beeswarm + waterfall + dependence plot + decisão sobre hipóteses de features
+
+**Modelo oficial: LightGBM default** com `y_prob_lgbm` e `THRESHOLD` definido na Seção 7.
+
+> **Atenção:** `03_base_master.ipynb` foi alterado (adição de `sem_historico_itens`). Re-executar o 03 e depois rodar o 04 do início para que a nova feature entre no X_train/X_test.
+
+**Seção pendente:**
+
 - **Seção 10** — Aplicação no snapshot atual → `clientes_alerta_modelo.xlsx`
 
 ---
@@ -252,20 +259,26 @@ Granularidade: um registro por cliente. Dataset final para modelagem.
 6. **Target = horizonte temporal (não RED_FLAG):** `churn = 1` se o cliente não fez nenhum pedido nos 3 meses após o CUTOFF. Mais operacionalizável e livre de leakage.
 7. **Split temporal estrito:** sem data leakage entre treino e teste. Features calculadas exclusivamente sobre dados anteriores ao CUTOFF de cada split.
 8. **Leakage corrigido em features de intervalo:** `n_intervalos`, `intervalo_medio`, `max_intervalo` e `categoria_cliente` eram puxados de `cliente_fidelidade` (histórico até DATA_REF). Corrigido em `03_base_master.ipynb` para usar apenas dados pré-CUTOFF.
-9. **Leakage corrigido no join do treino:** `df_target` contém colunas pós-CUTOFF (`primeiro_pedido_pos`, `outcome_end`, `categoria`, `threshold_meses`). O join usava `df_target` inteiro — corrigido para `df_target[["CLIENTE", "churn"]]` em `03_base_master.ipynb`. Parquets precisam ser re-gerados.
+9. **Leakage corrigido no join do treino:** `df_target` contém colunas pós-CUTOFF (`primeiro_pedido_pos`, `outcome_end`, `categoria`, `threshold_meses`). O join foi corrigido para `df_target[["CLIENTE", "churn"]]` em `03_base_master.ipynb`. Parquets re-gerados e modelo confirmado robusto após a correção.
 10. **`quantidade = count(linhas)` em itens:** o sistema registra uma linha por unidade — portanto `count` é a quantidade real, não uma proxy.
 11. **Sazonalidade de itens descartada:** 11.048 pares (cliente, item) sem dados suficientes para teste de Kruskal; não incluída como feature.
 12. **Constantes centralizadas em `src/config.py`:** DATA_REF, INICIO, CUTOFF_TREINO, CUTOFF_TESTE, HORIZONTE_MESES, LIMITES_CATEGORIA, THRESHOLD_CHURN, VERDE.
 13. **Hipóteses de remoção de features são exploratórias:** listas geradas na Seção 2-3 do `04_modelo` (baixo sinal + alta correlação entre features) não são filtros definitivos para XGBoost. Decisão final vem do SHAP (Seção 9). Exceção: `razao_atividade` removida com certeza (transformação linear).
 14. **VIF implementado via sklearn** (sem statsmodels): `1 / (1 - R²)` por regressão de cada feature contra as demais. Só relevante para a Regressão Logística.
-15. **`scale_pos_weight` vai para Optuna:** a 36% de churn o imbalanceamento não é severo. `scale_pos_weight` entra como hiperparâmetro no Optuna — a CV decide se ajuda.
+15. **Optuna descartado para o modelo oficial:** ganho de +0.0027 em AUC-PR é ruído para 610 exemplos de treino; `scale_pos_weight` alto deslocou scores → threshold F2-ótimo em 0.059 (65% da base como alerta, inoperacionalizável). Modelo oficial = LightGBM default. Optuna documentado na Seção 8 para referência futura.
+16. **Threshold via F2 (beta=2):** FN mais caro que FP em B2B — perder um churner é pior que acionar retenção desnecessária. Confirmar custo relativo com o cliente antes de fixar em produção.
+17. **`sem_historico_itens` adicionada para corrigir ambiguidade de imputação:** SHAP identificou comportamento espúrio — valores baixos (azul) de `pct_itens_queda` sendo empurrados para churn porque 0-imputado (sem histórico) era confundido com 0-real (portfólio 100% em crescimento). Feature binária criada ANTES do fillna(0) em `03_base_master.ipynb` nos dois splits e replicada na Seção 10 do `04_modelo.ipynb`.
+18. **Cópia antiga do projeto em `C:\Users\carva\central_eto`:** pasta com `data/processed/` vazia e `.venv` desatualizado. Não usar — pode causar `FileNotFoundError` silencioso se o kernel apontar para lá.
 
 ---
 
 ## Próximos Passos
 
-### IMEDIATO — Completar `04_modelo.ipynb` (Seções 3–10)
-Ver detalhamento completo no estado do notebook acima. Sequência: seleção de features → baseline → modelo principal → threshold → tuning → SHAP → aplicação.
+### IMEDIATO
+1. Re-executar `03_base_master.ipynb` do início (nova feature `sem_historico_itens`)
+2. Re-rodar `04_modelo.ipynb` do início com os parquets atualizados
+3. Concluir Seção 9 — SHAP (coletar resultados e documentar decisão de features)
+4. Escrever e rodar Seção 10 — aplicação no snapshot atual → `clientes_alerta_modelo.xlsx`
 
 ### P2 — Subfragmentação da categoria "Baixo" (pendente)
 Categoria atual "baixo" mistura clientes recorrentes de baixo volume com clientes sazonais (compra 1x/ano).
@@ -286,4 +299,5 @@ Categoria atual "baixo" mistura clientes recorrentes de baixo volume com cliente
 
 - [ ] Subfragmentação do "baixo": validar threshold `razao_atividade ≥ 0.4` com o cliente
 - [ ] Qualidade da variável `SETOR`: verificar cardinalidade e cobertura antes de usar
-- [ ] Custo assimétrico: qual o custo relativo de falso negativo vs falso positivo para definir threshold de decisão?
+- [ ] Custo assimétrico: confirmar com o cliente a proporção FN/FP para fixar threshold em produção (atualmente usando F2 como proxy — FN pesa 2× FP)
+- [ ] Capacidade operacional de retenção: quantos clientes a equipe consegue contatar por mês? Esse número pode definir o threshold diretamente via `n_alertas` na tabela de sweep (Seção 7)

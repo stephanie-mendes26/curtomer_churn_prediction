@@ -1,25 +1,43 @@
 central_eto/
-  data/
-    raw/          # snapshots pequenos (parquet/csv), se permitido
-    processed/
-  notebooks/
-    01_pedidos_eda.ipynb
-    02_notas_eda.ipynb
-    03_inadimplencia_eda.ipynb
-    04_cliente_mes_base.ipynb
-  src/
-    __init__.py
-    config.py
-    db.py         # conexão + queries
-    extract.py    # funções de extração
-    features.py
-    models.py
-    evaluation.py
-  queries/
-    notas.sql
-    makerpedidos.sql
-    clientes.sql
-  requirements.txt
-  .env (não comita)
-  .gitignore
-  README.md 
+├── CLAUDE.md                            # instruções do projeto para o assistente
+├── estrutura.txt                        # este arquivo — atualizar sempre que mudar algo
+├── variaveis.txt                        # dicionário completo das features do modelo
+├── threshold_churn                      # referência dos thresholds de churn por categoria
+├── apresentacao_churn.pptx              # apresentação para o cliente (gerada por gerar_apresentacao.py)
+├── gerar_apresentacao.py                # script para (re)gerar o .pptx
+├── requirements.txt                     # dependências do projeto
+├── .env                                 # credenciais de banco (nunca commitar)
+├── .gitignore
+│
+├── data/
+│   ├── raw/                             # reservado para snapshots brutos (não usado ainda)
+│   └── processed/                       # outputs dos notebooks — nunca editar à mão
+│       ├── cliente_mes.parquet          # cliente × mês (gerado por 01_pedidos_eda)
+│       ├── cliente_fidelidade.parquet   # um registro por cliente, recência e intervalos (gerado por 01_pedidos_eda)
+│       ├── cliente_item_tendencia.parquet  # cliente × item, slopes e variação (gerado por 02_itens_eda)
+│       ├── clientes_alerta.xlsx         # lista de clientes em risco pela regra RED_FLAG (gerado por 02_clientes_eda)
+│       ├── df_master.parquet            # tabela analítica de clientes (gerado por 02_clientes_eda)
+│       ├── df_model_treino.parquet      # dataset de treino com features + target (gerado por 03_base_master)
+│       └── df_model_teste.parquet       # dataset de teste com features + target (gerado por 03_base_master)
+│
+├── notebooks/
+│   ├── 01_pedidos_eda.ipynb             # CONCLUÍDO — EDA de pedidos, cria cliente_mes e cliente_fidelidade
+│   ├── 02_clientes_eda.ipynb            # PAUSADO — EDA de cadastro de clientes (variáveis não confiáveis)
+│   ├── 02_itens_eda.ipynb               # CONCLUÍDO — EDA de itens, cria cliente_item_tendencia
+│   ├── 03_base_master.ipynb             # CONCLUÍDO — monta df_model_treino e df_model_teste
+│   └── 04_modelo.ipynb                  # EM ANDAMENTO — modelagem, SHAP, aplicação
+│
+├── queries/
+│   ├── base_pedidos.sql                 # query principal de pedidos (df_base)
+│   ├── base_clientes.sql                # cadastro de clientes + DIASINADIMPLENTE
+│   ├── base_clientes_enriquecida.sql    # versão enriquecida com mais variáveis cadastrais
+│   ├── profiling_pedidos.sql            # queries de profiling para EDA de pedidos
+│   └── profiling_clientes.sql           # queries de profiling para EDA de clientes
+│
+└── src/
+    ├── __init__.py
+    ├── config.py                        # constantes centralizadas: DATA_REF, CUTOFFs, paleta, thresholds
+    ├── db.py                            # conexão com banco — usar db.get_data(sql) e db.test_connection()
+    ├── features_EDA_pedidos.py          # make_cliente_mes() — agrega pedidos por cliente × mês
+    ├── sanity_check.py                  # sanity_check() — validação de dataframes
+    └── utils.py                         # funções auxiliares gerais

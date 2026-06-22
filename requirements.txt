@@ -6,3 +6,9 @@ scipy
 python-dotenv
 pyodbc
 jupyter
+scikit-learn
+xgboost
+lightgbm
+optuna
+shap
+openpyxl
