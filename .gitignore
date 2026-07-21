@@ -13,6 +13,10 @@ __pycache__/
 data/raw/
 data/processed/
 
+# relatórios gerados automaticamente — contêm nome/receita real de cliente
+reports/lista_alertas_churn.html
+reports/waterfall_cliente_*.png
+
 # credenciais
 .env
 

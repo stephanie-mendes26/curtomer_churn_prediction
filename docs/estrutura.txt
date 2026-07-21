@@ -10,11 +10,18 @@ central_eto/
 │   └── processed/                       # outputs dos notebooks — nunca editar à mão
 │       ├── cliente_mes.parquet          # cliente × mês (gerado por 01_pedidos_eda)
 │       ├── cliente_fidelidade.parquet   # um registro por cliente, recência e intervalos (gerado por 01_pedidos_eda)
-│       ├── cliente_item_tendencia.parquet  # cliente × item, slopes e variação (gerado por 02_itens_eda)
+│       ├── cliente_item_tendencia.parquet  # cliente × item, slopes e variação, histórico COMPLETO (gerado por 02_itens_eda) — uso correto é só EDA, não usar como feature de modelo direto (ver decisão 48 do CLAUDE.md)
+│       ├── cliente_item_mes.parquet     # cliente × item × mês, quantidade bruta sem agregação de tendência (gerado por 02_itens_eda, jul/2026) — permite recalcular slope respeitando cutoff
 │       ├── clientes_alerta.xlsx         # lista de clientes em risco pela regra RED_FLAG (gerado por 02_clientes_eda)
 │       ├── df_master.parquet            # tabela analítica de clientes (gerado por 02_clientes_eda)
 │       ├── df_model_treino.parquet      # dataset de treino com features + target (gerado por 03_base_master)
-│       └── df_model_teste.parquet       # dataset de teste com features + target (gerado por 03_base_master)
+│       ├── df_model_teste.parquet       # dataset de teste com features + target (gerado por 03_base_master)
+│       ├── receita_cliente.parquet      # receita média mensal por cliente (gerado por calculo_receita)
+│       ├── scores_2026.parquet          # scoring completo — p_churn, valor_em_risco, decil (gerado por scripts/scoring_mensal.py)
+│       ├── clientes_alerta_modelo.xlsx  # lista final de alertas por valor em risco (top N_CAPACIDADE, gerado por scripts/scoring_mensal.py)
+│       ├── modelo_churn.pkl             # modelo vencedor (dinâmico — hoje XGBoost) + calibrador + lista de features, persistidos via pickle (gerado por 04_modelo.ipynb). Renomeado de modelo_lgbm.pkl em jul/2026 — nome antigo citava um modelo específico que deixou de ser sempre o vencedor
+│       ├── imputacao_treino.pkl         # medianas_cadencia_treino (cv_pedidos/intervalo_medio/max_intervalo) calculadas só no treino (gerado por 03_base_master.ipynb, jul/2026) — usado por scripts/scoring_mensal.py pra imputar dado ao vivo sem recalcular estatística fora do treino
+│       └── features_scoring_atual.parquet  # features cruas do ciclo de scoring atual (gerado por scripts/scoring_mensal.py, jul/2026) — usado por scripts/gerar_relatorio.py pra montar o "motivo principal" com valores reais, nunca com o snapshot congelado df_model_teste.parquet
 │
 ├── docs/
 │   ├── estrutura.txt                    # este arquivo — atualizar sempre que mudar algo
@@ -24,9 +31,15 @@ central_eto/
 ├── notebooks/
 │   ├── 01_pedidos_eda.ipynb             # CONCLUÍDO — EDA de pedidos, cria cliente_mes e cliente_fidelidade
 │   ├── 02_clientes_eda.ipynb            # PAUSADO — EDA de cadastro de clientes (variáveis não confiáveis)
-│   ├── 02_itens_eda.ipynb               # CONCLUÍDO — EDA de itens, cria cliente_item_tendencia
-│   ├── 03_base_master.ipynb             # CONCLUÍDO — monta df_model_treino e df_model_teste
-│   └── 04_modelo.ipynb                  # EM ANDAMENTO — modelagem, SHAP, aplicação
+│   ├── 02_itens_eda.ipynb               # CONCLUÍDO — EDA de itens, cria cliente_item_tendencia e cliente_item_mes
+│   ├── 03_base_master.ipynb             # CONCLUÍDO — monta df_model_treino e df_model_teste (features de item recalculadas pré-cutoff via src/features_itens.py, jul/2026); também persiste imputacao_treino.pkl
+│   ├── 04_modelo.ipynb                  # CONCLUÍDO — pipeline de TREINO: modelagem, SHAP, calibração (não faz mais o scoring — ver scripts/)
+│   ├── calculo_receita.ipynb            # CONCLUÍDO — receita média mensal por cliente
+│   └── explicar_cliente.ipynb           # ferramenta ad-hoc — troca CLIENTE_ID e roda de novo pra ver o waterfall SHAP inline, sem gerar arquivo
+│
+├── scripts/
+│   ├── scoring_mensal.py                # pipeline de INFERÊNCIA — puxa pedidos/cadastro frescos do banco a cada execução, recalcula features (comportamento/fidelidade/itens) até o último mês fechado, carrega modelo_churn.pkl (modelo dinâmico) + imputacao_treino.pkl. Passo 2 100% concluído (jul/2026) — testado contra o banco real. Chama gerar_relatorio() no final — uma única execução atualiza scores, Excel e o relatório HTML
+│   └── gerar_relatorio.py               # gera reports/lista_alertas_churn.html do ZERO a cada chamada (nunca edita o arquivo existente — decisão 55, jul/2026). Lê scores_2026.parquet + features_scoring_atual.parquet; AUC-ROC e contagem total sempre recalculadas, nunca hardcoded
 │
 ├── queries/
 │   ├── base_pedidos.sql                 # query principal de pedidos (df_base)
@@ -36,13 +49,19 @@ central_eto/
 │   └── profiling_clientes.sql           # queries de profiling para EDA de clientes
 │
 ├── reports/
-│   ├── apresentacao_churn.pptx          # apresentação para o cliente (não técnico)
-│   └── gerar_apresentacao.py            # script para (re)gerar o .pptx
+│   └── lista_alertas_churn.html         # relatório visual da lista de alertas (stat tiles, gráfico, tabela com motivo por cliente) — gerado por scripts/gerar_relatorio.py, sempre do zero, nunca editar à mão
+│
+├── validar_lista_alertas.py              # script ad-hoc: confere no banco em tempo real a situação atual (Ativo/Inativo, última compra) dos clientes da lista de alertas — não é pipeline, é ferramenta de teste manual
+├── explicar_cliente.py                   # script ad-hoc: waterfall SHAP de um cliente específico, salva PNG em reports/ — uso: python explicar_cliente.py <CLIENTE_ID>
 │
 └── src/
     ├── __init__.py
     ├── config.py                        # constantes centralizadas: DATA_REF, CUTOFFs, paleta, thresholds
     ├── db.py                            # conexão com banco — usar db.get_data(sql) e db.test_connection()
     ├── features_EDA_pedidos.py          # make_cliente_mes() — agrega pedidos por cliente × mês
+    ├── features_itens.py                # tendencia_slope() e calc_features_itens_pre_cutoff() (jul/2026) — recalcula slope/pct_itens_queda/n_itens_portfolio respeitando cutoff, evita vazamento (decisão 48)
+    ├── features_comportamento.py        # meses_desde() e calc_features_comportamento_pre_cutoff() (jul/2026, Passo 2) — volume, ticket, recência, cadência, extraído de 03_base_master
+    ├── features_fidelidade.py           # calc_features_fidelidade_pre_cutoff() (jul/2026, Passo 2) — intervalo entre pedidos e categoria predominante, extraído de 03_base_master
+    ├── model_prep.py                    # preparar_xy() (treino) e preparar_X() (inferência) (jul/2026, Passo 2) — mapeamento categórico + fillna semântico, único lugar agora; usado por 04_modelo.ipynb, scoring_mensal.py e explicar_cliente.*
     ├── sanity_check.py                  # sanity_check() — validação de dataframes
     └── utils.py                         # funções auxiliares gerais

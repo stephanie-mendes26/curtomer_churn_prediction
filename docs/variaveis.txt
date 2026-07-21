@@ -2,20 +2,35 @@ DICIONÁRIO DE VARIÁVEIS — MODELO DE CHURN
 ==========================================
 Projeto: Previsão de Churn B2B
 Data de referência: DATA_REF = 2026-05-01
-Janela de dados: 2023-01 até CUTOFF_TREINO (2024-12)
-Target: churn_h3 — cliente não pediu nada nos 3 meses após o CUTOFF
+Janela de dados: 2023-01 até o CUTOFF de cada split (CUTOFF_TREINO = 2024-12,
+CUTOFF_TESTE = 2025-11) — os dois splits usam a mesma lógica de features, só
+mudam o corte.
+Target: churn — ver seção abaixo (NÃO é um horizonte fixo de 3 meses).
+
+ATUALIZADO jul/2026: este arquivo estava desatualizado em vários pontos (target,
+imputação de cadência, features de item). Revisado por completo contra o código
+real de 03_base_master.ipynb, src/features_*.py e src/model_prep.py — não contra
+a documentação anterior. Números de Pearson/MI abaixo são da execução mais
+recente (pós-correção de vazamento, decisão 48 do CLAUDE.md).
 
 
 ─────────────────────────────────────────
 TARGET
 ─────────────────────────────────────────
 
-churn_h3
-  O que é: variável que o modelo tenta prever.
-  Conta: pegamos os 3 meses após o CUTOFF (jan, fev, mar/2025). Se o cliente
-         fez pelo menos 1 pedido nesse período → 0 (ficou ativo). Se não fez
-         nenhum pedido → 1 (churnou).
-  Origem: 03_base_master.ipynb, cruzamento entre cm_feat e cm_outcome.
+churn
+  O que é: variável que o modelo tenta prever. NÃO usa horizonte fixo de 3 meses
+           para todo mundo — a janela de tolerância é personalizada por categoria.
+  Conta: para cada cliente, olha o primeiro pedido após o CUTOFF. churn=1 se
+         não houver nenhum pedido dentro da janela de tolerância da categoria
+         predominante do cliente (baixo=6 meses, medio=3, alto=2, premium=2 —
+         dict THRESHOLD_CHURN). churn=0 caso contrário.
+  Origem: 03_base_master.ipynb — df_target (treino) / df_target_teste (teste).
+          No split de teste, a janela de tolerância é travada em DATA_REF quando
+          isso encurta o prazo (clientes "baixo" perto do fim dos dados).
+  Intuição: um cliente "baixo" (compra esporádica) só é considerado churn depois
+            de bem mais tempo sumido que um cliente "premium" (compra toda semana)
+            — a régua de silêncio tolerável depende do perfil do cliente.
 
 
 ─────────────────────────────────────────
@@ -31,145 +46,234 @@ NOME
 
 ─────────────────────────────────────────
 FEATURES — COMPORTAMENTO MENSAL
-(calculadas sobre cliente_mes.parquet, janela pré-CUTOFF)
+(calculadas por src/features_comportamento.py::calc_features_comportamento_pre_cutoff(),
+sobre cliente_mes.parquet filtrado até o cutoff de cada split)
 ─────────────────────────────────────────
 
+Pearson / MI com o target (execução XGBoost, pós-correção de vazamento):
+
+  n_meses_ativos       0.523 / 0.207
+  total_valor          0.099 / 0.144
+  media_pedidos_mes    0.079 / 0.137
+  ticket_medio         0.027 / 0.000
+  itens_por_pedido     0.011 / 0.078
+  total_pedidos        0.092 / 0.178
+  meses_sem_pedido_pre 0.616 / 0.236  ← mais forte de todas as features
+  cv_pedidos           0.155 / 0.161
+  categoria_pedido     0.151 / 0.000
+  razao_atividade      0.523 / 0.230  (removida — ver nota abaixo)
+
 n_meses_ativos
-  O que é: quantos meses o cliente teve pelo menos 1 pedido na janela.
-  Conta: groupby("CLIENTE").count() sobre as linhas de cliente_mes na janela pré-CUTOFF.
-  Intuição: mede senioridade e presença. Cliente que pediu em 20 dos 23 meses
-            é muito diferente de quem pediu só em 2.
+  O que é: quantos meses o cliente teve pelo menos 1 pedido na janela pré-cutoff.
+  Conta: groupby("CLIENTE").count() sobre as linhas de cliente_mes filtradas até
+         o cutoff do split.
+  Intuição: mede senioridade e presença. O tamanho da janela varia por split
+            (23 meses no treino, ~34 no teste) — n_meses_ativos não é comparável
+            em valor absoluto entre os dois sem normalizar (é isso que
+            razao_atividade tentava fazer, ver abaixo).
 
 total_pedidos
-  O que é: soma de pedidos únicos do cliente em toda a janela.
-  Conta: groupby("CLIENTE").sum(total_pedidos) sobre cliente_mes pré-CUTOFF.
+  O que é: soma de pedidos únicos do cliente em toda a janela pré-cutoff.
+  Conta: groupby("CLIENTE").sum(total_pedidos) sobre cliente_mes.
   Intuição: volume histórico total — clientes de alto volume têm perfis distintos.
 
 total_valor
-  O que é: faturamento total do cliente na janela.
-  Conta: groupby("CLIENTE").sum(total_valor) sobre cliente_mes pré-CUTOFF.
-  Intuição: semelhante ao total_pedidos, mas em R$. Captura clientes de alto valor.
+  O que é: faturamento total do cliente na janela pré-cutoff.
+  Conta: groupby("CLIENTE").sum(total_valor) sobre cliente_mes.
+  Intuição: semelhante a total_pedidos, mas em R$. Captura clientes de alto valor.
 
 media_pedidos_mes
   O que é: média de pedidos por mês ativo.
-  Conta: total_pedidos / n_meses_ativos.
+  Conta: mean(total_pedidos mensal) por cliente — equivale a total_pedidos
+         (soma) / n_meses_ativos, já que a média é sobre os mesmos meses ativos.
   Intuição: normaliza o volume pelo tempo ativo. Um cliente que pediu 20 vezes
             em 2 meses é muito diferente de um que pediu 20 vezes em 20 meses.
 
 ticket_medio
   O que é: valor médio por pedido.
-  Conta: total_valor / total_pedidos (média calculada no agrupamento).
-  Intuição: perfil de gasto por pedido. Mostrou correlação muito baixa com churn
-            na análise — o modelo provavelmente vai ignorar essa feature.
+  Conta: mean(ticket_medio mensal) por cliente — média das razões mensais
+         (total_valor/total_pedidos de cada mês), NÃO a razão dos totais
+         agregados (total_valor_soma / total_pedidos_soma) — as duas podem
+         diferir ligeiramente.
+  Intuição: perfil de gasto por pedido. Pearson/MI baixos isoladamente, mas o
+            SHAP mostrou sinal real (0.0833, 5ª feature mais importante na
+            execução XGBoost) — a hipótese de "sinal fraco" foi derrubada
+            (ver FEATURES CANDIDATAS A REMOÇÃO).
 
 itens_por_pedido
   O que é: média de itens por pedido.
-  Conta: groupby("CLIENTE").mean(itens_por_pedido) sobre cliente_mes pré-CUTOFF.
+  Conta: mean(itens_por_pedido mensal) por cliente, sobre cliente_mes pré-cutoff.
   Intuição: clientes que pedem muitos itens por pedido têm comportamento distinto.
-            Pearson baixo, mas MI moderado — sinal não-linear.
+            Pearson baixo, MI moderado — sinal não-linear; SHAP confirma
+            (0.0923, 4ª feature mais importante).
 
 categoria_pedido
   O que é: perfil predominante do cliente em volume de pedidos mensais.
-  Conta: moda de categoria_pedido na janela pré-CUTOFF.
+  Conta: moda de categoria_pedido na janela pré-cutoff.
          Thresholds: baixo ≤ 2 pedidos/mês | medio 3-5 | alto 6-19 | premium ≥ 20.
-         Codificação ordinal: baixo=0, medio=1, alto=2, premium=3.
-  Intuição: classifica o tipo de cliente pelo volume. Mostrou sinal fraco —
-            as features numéricas já capturam essa informação com mais detalhe.
-  Status: CANDIDATA A REMOÇÃO.
+         Codificação ordinal (baixo=0, medio=1, alto=2, premium=3) aplicada em
+         src/model_prep.py, não em 03_base_master.ipynb.
+  Intuição: classifica o tipo de cliente pelo volume. SHAP confirmou sinal fraco
+            (0.0027) — as features numéricas já capturam essa informação com
+            mais detalhe.
+  Status: REMOVIDA do X_score final (SHAP < 0.01 — ver FEATURES CANDIDATAS A REMOÇÃO).
 
 cv_pedidos
   O que é: coeficiente de variação dos pedidos mensais (irregularidade).
   Conta: std(total_pedidos por mês) / mean(total_pedidos por mês), calculado
-         no agrupamento por cliente. NaN preenchido com 0 (clientes com 1 mês ativo).
-  Intuição: mede consistência. cv=0.1 é um cliente que pede a mesma quantidade
-            todo mês. cv=0.9 é um cliente caótico, ora some ora aparece com pedidão.
-            Clientes irregulares tendem mais ao churn.
+         no agrupamento por cliente.
+  Imputação (CORRIGIDA — não é mais fillna(0)): clientes com só 1 mês ativo têm
+         cv estruturalmente indefinido (std de 1 ponto não existe). Preenchido
+         com a MEDIANA do treino, calculada só sobre clientes com histórico real
+         (sem_historico_cadencia == 0) — mesmo valor reutilizado no teste, sem
+         recálculo (evita leakage). Valor atual: 0.3671.
+  Intuição: mede consistência. cv baixo é um cliente que pede quantidade
+            parecida todo mês. cv alto é um cliente irregular — tendem mais
+            ao churn.
 
 meses_sem_pedido_pre
-  O que é: quantos meses o cliente ficou sem pedir antes do CUTOFF.
-  Conta: CUTOFF_PERIOD.ordinal - ultimo_mes_ativo.ordinal (diferença em meses).
-  Intuição: recência. É a feature mais forte do modelo (Pearson ~0.62). Se o
-            cliente já estava sumido antes do CUTOFF, alta chance de continuar sumido.
+  O que é: quantos meses o cliente ficou sem pedir antes do cutoff do split.
+  Conta: diferença em meses entre o cutoff e o último mês ativo do cliente
+         (função meses_desde() em src/features_comportamento.py).
+  Intuição: recência. É a feature mais forte do modelo, disparado — Pearson 0.616,
+            e SHAP muito acima de todas as outras (0.8502 na execução XGBoost,
+            ~4x a 2ª colocada). Se o cliente já estava sumido antes do cutoff,
+            alta chance de continuar sumido.
 
 razao_atividade
-  O que é: proporção de meses ativos sobre a janela total disponível.
-  Conta: n_meses_ativos / 23 (23 meses = jan/2023 a dez/2024).
-  Intuição: normaliza a presença pelo tempo total. Mas como é uma transformação
-            linear direta de n_meses_ativos (dividir por constante), não adiciona
-            informação nova.
-  Status: CANDIDATA A REMOÇÃO (redundante com n_meses_ativos).
+  O que é: proporção de meses ativos sobre a janela total disponível do split.
+  Conta: n_meses_ativos / janela_meses (janela_meses varia por split — calculada
+         dentro de calc_features_comportamento_pre_cutoff(), não é uma constante
+         fixa como "23" para os dois splits).
+  Status: REMOVIDA com certeza (não é só candidata) — transformação linear direta
+          de n_meses_ativos (dividir por uma constante do split), zero
+          informação nova. Removida na Seção 3 do 04_modelo.ipynb, antes mesmo
+          do SHAP.
 
 
 ─────────────────────────────────────────
 FEATURES — PADRÃO DE INTERVALOS
-(recalculadas sobre cm_feat pré-CUTOFF para evitar leakage)
+(calculadas por src/features_fidelidade.py::calc_features_fidelidade_pre_cutoff(),
+sobre cm_feat pré-cutoff)
 ─────────────────────────────────────────
 
 intervalo_medio
-  O que é: média de meses entre pedidos consecutivos na janela pré-CUTOFF.
-  Conta: para cada cliente, ordena os meses ativos e calcula a diferença entre
-         meses consecutivos usando Period.ordinal. Tira a média dessas diferenças.
-         NaN (cliente com só 1 mês ativo) preenchido com 2 × max_observado,
-         sinalizando "intervalo desconhecido/grande".
+  O que é: média das diferenças (em meses) entre pedidos consecutivos do cliente
+           na janela pré-cutoff.
+  Conta: ordena os meses ativos, calcula a diferença entre consecutivos
+         (Period.ordinal), tira a média dessas diferenças.
+  LIMITAÇÃO MATEMÁTICA (discutida e confirmada jul/2026 — não é um bug, é uma
+         propriedade da soma telescópica): a média de diferenças consecutivas
+         SEMPRE colapsa em (último_mês - primeiro_mês) / n_intervalos, não
+         importa como os meses estão espaçados internamente. Ou seja, a feature
+         mede a taxa média ao longo do período observado, não a regularidade do
+         espaçamento. Um cliente com cadência perfeitamente regular e um cliente
+         que comprava todo mês mas sumiu recentemente podem ter exatamente o
+         mesmo intervalo_medio. max_intervalo (abaixo) captura parcialmente o
+         que fica perdido aqui (o maior gap already é uma feature separada).
+         Não corrigido — registrado como limitação conhecida, candidato a
+         complementar com std/IQR das diferenças se o ganho justificar o esforço.
+  Imputação (CORRIGIDA — não é mais 2× max_observado): NaN (cliente com só 1 mês
+         ativo, intervalo estruturalmente indefinido) preenchido com a MEDIANA
+         do treino sobre clientes com histórico real, mesma disciplina do
+         cv_pedidos. Valor atual: 1.4000.
   Intuição: frequência estrutural do cliente. intervalo_medio=1 pede todo mês.
-            intervalo_medio=4 pede a cada 4 meses — perfil sazonal, mais frágil.
+            intervalo_medio=4 pede a cada 4 meses em média — mas ver limitação acima.
 
 max_intervalo
-  O que é: maior intervalo já registrado entre dois pedidos consecutivos na janela.
-  Conta: max() das diferenças entre meses ativos consecutivos (Period.ordinal).
-  Intuição: captura o "pior episódio" de sumiço histórico. Um cliente que uma vez
-            ficou 8 meses sem pedir tem comportamento diferente de um que nunca
-            passou de 2 — mesmo que hoje tenham o mesmo intervalo_medio.
-            Pearson baixo mas MI moderado: sinal não-linear.
+  O que é: maior intervalo já registrado entre dois pedidos consecutivos na
+           janela pré-cutoff.
+  Conta: max() das diferenças entre meses ativos consecutivos.
+  Imputação: mesma mediana do treino que intervalo_medio (sobre clientes com
+         histórico real). Valor atual: 3.0000. Sanity check no código garante
+         mediana(max_intervalo) >= mediana(intervalo_medio) — fisicamente
+         necessário (o maior gap não pode ser menor que a média dos gaps).
+  Intuição: captura o "pior episódio" de sumiço histórico — o complemento
+            direto da limitação do intervalo_medio acima. Um cliente que uma
+            vez ficou 8 meses sem pedir tem comportamento diferente de um que
+            nunca passou de 2, mesmo com o mesmo intervalo_medio.
 
 n_intervalos
-  O que é: quantidade de intervalos calculados na janela pré-CUTOFF.
-  Conta: len(diferenças entre meses ativos) = n_meses_ativos - 1 para clientes
-         com pedidos consecutivos. Calculado direto do cm_feat pré-CUTOFF.
-  Intuição: proxy de senioridade. n_intervalos=20 é um cliente com longa
-            história de compras na janela. n_intervalos=1 é cliente novo ou
-            que comprou em apenas 2 meses.
-  Nota: anteriormente era puxado do cliente_fidelidade (histórico completo até
-        DATA_REF), o que causava leakage. Corrigido em 03_base_master.ipynb para
-        usar apenas dados pré-CUTOFF.
+  O que é: quantidade de intervalos calculados na janela pré-cutoff.
+  Conta: len(diferenças entre meses ativos) = n_meses_ativos - 1.
+  Intuição: proxy de senioridade/quantidade de observações. n_intervalos=0
+            (n_meses_ativos==1) aciona a flag sem_historico_cadencia.
+  Nota histórica: antes vinha de cliente_fidelidade (histórico completo até
+        DATA_REF), causando leakage — corrigido para usar só dados pré-cutoff
+        (decisão 8 do CLAUDE.md, já corrigido há mais tempo que o vazamento de
+        item da decisão 48).
 
 categoria_cliente
-  O que é: perfil geral do cliente — moda de categoria_pedido na janela pré-CUTOFF.
-  Conta: moda de categoria_pedido calculada sobre cm_feat.
-         Codificação ordinal: baixo=0, medio=1, alto=2, premium=3.
-  Intuição: diferente de categoria_pedido (que é a última moda), esta captura
-            o perfil histórico predominante do cliente na janela inteira.
+  O que é: perfil geral do cliente — moda de categoria_pedido na janela pré-cutoff.
+  Conta: moda de categoria_pedido calculada sobre cm_feat (mesma janela usada
+         pra intervalo_medio/max_intervalo/n_intervalos).
+         Codificação ordinal (baixo=0, medio=1, alto=2, premium=3) em src/model_prep.py.
+  Status: REMOVIDA do X_score final (SHAP = 0.0000 — sinal nulo).
 
 
 ─────────────────────────────────────────
 FEATURES — TENDÊNCIA DE PORTFÓLIO
-(calculadas sobre cliente_item_tendencia.parquet)
+(calculadas por src/features_itens.py::calc_features_itens_pre_cutoff(),
+sobre cliente_item_mes.parquet filtrado até o cutoff de cada split)
 ─────────────────────────────────────────
 
+CORREÇÃO DE VAZAMENTO (jul/2026, CLAUDE.md decisão 48): estas 3 features vinham
+de cliente_item_tendencia.parquet, calculado sobre o HISTÓRICO COMPLETO (sem
+cutoff) — o mesmo valor (contaminado com meses futuros) era usado tanto no
+treino quanto no teste. Corrigido: agora recalculadas por split, usando só
+pedidos até o cutoff de cada um. Depois da correção, a importância SHAP das
+três caiu de forma acentuada (slope_portfolio_medio 0.0883→0.0190,
+pct_itens_queda 0.0674→0.0419, n_itens_portfolio 0.1098→0.0131 na execução
+XGBoost) — evidência de que o sinal antigo era majoritariamente vazamento.
+
 slope_portfolio_medio
-  O que é: média das tendências lineares de todos os itens que o cliente compra.
+  O que é: média das tendências lineares de todos os itens que o cliente compra,
+           considerando só pedidos até o cutoff do split (treino ou teste).
   Conta: para cada par (cliente, item), aplica np.polyfit(meses, quantidades, 1)
-         para obter o slope (inclinação da reta). Agrega por cliente tirando a média
-         dos slopes de todos os seus itens. NaN preenchido com 0 (sem histórico).
+         para obter o slope (inclinação da reta), usando só meses <= cutoff.
+         Agrega por cliente tirando a média dos slopes de todos os seus itens.
+  Imputação: NaN preenchido com 0 (fillna direto em 03_base_master.ipynb, s6_impute
+         — sem histórico suficiente pré-cutoff; distinto do fillna semântico de
+         DIASINADIMPLENTE/n_itens_portfolio, que acontece em src/model_prep.py).
   Intuição: detecta migração gradual para concorrente. slope=-0.5 significa que
-            em média cada item está caindo 0.5 unidades por mês. Pearson baixo
-            (~0.10) mas MI alto (~0.22) — relação não-linear importante.
+            em média cada item está caindo 0.5 unidades por mês.
 
 pct_itens_queda
-  O que é: porcentagem de itens do portfólio com tendência de queda.
-  Conta: proporção de itens com slope < 0, calculada por cliente.
-         pct_itens_queda = (slope < 0).sum() / total_itens.
-         NaN preenchido com 0.
+  O que é: porcentagem de itens do portfólio com tendência de queda, calculada
+           só com dado pré-cutoff.
+  Conta: proporção de itens com slope < 0, calculada por cliente
+         (inclui itens com slope indefinido — < 2 meses de dado — no denominador,
+         não só os com slope calculável).
+  Imputação: NaN preenchido com 0, mesma célula que slope_portfolio_medio.
   Intuição: complementa slope_portfolio_medio. pct=0.6 significa que 60% dos
             itens que o cliente compra estão diminuindo — sinal forte de saída
-            gradual. Sinal identificado pelo cliente como importante.
+            gradual.
 
 n_itens_portfolio
-  O que é: número de itens distintos comprados pelo cliente no histórico.
-  Conta: contagem de linhas únicas de SERVICO por cliente em cliente_item_tendencia.
-  Intuição: clientes com portfólio amplo (ex: 197 itens) são mais integrados
-            à operação da empresa. Clientes que compram só 2-3 itens são mais
-            fáceis de trocar por concorrente.
+  O que é: número de itens distintos comprados pelo cliente até o cutoff do split.
+  Conta: nunique(SERVICO) por cliente em cliente_item_mes, filtrado por cutoff.
+  Imputação: NaN preenchido com 0 em src/model_prep.py (FILLNA_SEMANTICO),
+         coberto pela flag sem_historico_itens.
+  Intuição: clientes com portfólio amplo são mais integrados à operação da
+            empresa. Importância caiu bastante após a correção de vazamento —
+            grande parte do sinal anterior vinha de "quantos meses de histórico
+            futuro o cliente teve", não do portfólio em si.
+
+sem_historico_itens
+  O que é: flag binária — 1 se o cliente não tem histórico de itens suficiente
+           pré-cutoff para calcular slope/pct_itens_queda (distingue "sem dado"
+           de "0 real").
+  Conta: pct_itens_queda.isna() | slope_portfolio_medio.isna(), calculado ANTES
+         do fillna(0) das duas, em 03_base_master.ipynb.
+  Status: REMOVIDA do X_score final (SHAP = 0.0015 na execução XGBoost).
+
+sem_historico_cadencia
+  O que é: flag binária — 1 se n_intervalos == 0 (cliente com só 1 mês ativo,
+           cadência estruturalmente indefinida).
+  Conta: n_intervalos == 0, calculado ANTES do fillna de cv_pedidos/intervalo_medio/
+         max_intervalo.
+  Status: REMOVIDA do X_score final (SHAP = 0.0000 — o modelo aprende a mesma
+          distinção via n_intervalos diretamente).
 
 
 ─────────────────────────────────────────
@@ -177,28 +281,57 @@ FEATURE — FINANCEIRO
 ─────────────────────────────────────────
 
 DIASINADIMPLENTE
-  O que é: dias em atraso no momento da extração dos dados do banco.
-  Origem: tabela de clientes via query base_clientes.sql.
-  Intuição: hipótese de que inadimplência pode preceder churn. Na análise mostrou
-            sinal fraco (Pearson ~0.12, MI ~0.07) — inadimplência e saída não
-            parecem fortemente correlacionadas nessa base.
+  O que é: dias em atraso no momento da extração dos dados do banco (via
+           queries/base_clientes.sql).
+  Imputação: NaN (cliente ausente do cadastro de inadimplência) preenchido com 0
+         em src/model_prep.py (FILLNA_SEMANTICO) — ausência = 0 dias em atraso.
+  Intuição: hipótese de que inadimplência pode preceder churn. Pearson 0.096
+            (fraco), mas MI 0.125 (moderado — sinal não-linear real). SHAP
+            confirma relevância moderada (0.0490, 10ª de 19 features) — não é
+            a feature mais forte, mas também não é ruído puro.
 
 
 ─────────────────────────────────────────
 DECISÕES DE ENCODING
 ─────────────────────────────────────────
 
-categoria_pedido e categoria_cliente foram codificadas ordinalmente (não dummies)
+categoria_pedido e categoria_cliente são codificadas ordinalmente (não dummies)
 porque são variáveis com ordem natural: baixo < medio < alto < premium.
 Encoding ordinal preserva essa ordem e é mais adequado para modelos tree-based.
 
 Mapeamento: baixo=0, medio=1, alto=2, premium=3
+Implementado em: src/model_prep.py (MAPA_CATEGORIA), usado por preparar_xy()
+(treino) e preparar_X() (inferência) — único lugar desde jul/2026 (antes estava
+duplicado em 04_modelo.ipynb, scripts/scoring_mensal.py e explicar_cliente.py).
 
 
 ─────────────────────────────────────────
-FEATURES CANDIDATAS A REMOÇÃO
+FEATURES CANDIDATAS A REMOÇÃO — DECISÃO FINAL (SHAP, jul/2026)
 ─────────────────────────────────────────
 
-razao_atividade  → transformação linear de n_meses_ativos, zero informação nova
-ticket_medio     → Pearson 0.05, MI 0.01 — praticamente ruído
-categoria_pedido → sinal muito fraco, informação já capturada pelas features numéricas
+Esta seção documentava hipóteses PRELIMINARES (Pearson/MI baixos ou correlação
+alta entre features, Seções 2/3 do 04_modelo.ipynb) — a decisão real vem do
+SHAP (Seção 9), que confirma ou derruba cada hipótese. Lista abaixo é o
+resultado final da execução mais recente (modelo XGBoost, pós-correção de
+vazamento):
+
+REMOVIDAS do X_score (SHAP < 0.01, confirmado):
+  categoria_pedido        (SHAP 0.0027)
+  categoria_cliente        (SHAP 0.0000)
+  sem_historico_itens      (SHAP 0.0015)
+  sem_historico_cadencia   (SHAP 0.0000)
+  razao_atividade          (removida antes do SHAP — certeza matemática, não hipótese)
+
+HIPÓTESE DERRUBADA PELO SHAP — mantida no modelo:
+  ticket_medio             (SHAP 0.0833 — sinal real, apesar do Pearson/MI baixos
+                             isolados; NÃO remover apesar do que a EDA inicial sugeria)
+
+Todas as outras features (total_valor, n_meses_ativos, n_intervalos,
+media_pedidos_mes, max_intervalo, intervalo_medio, DIASINADIMPLENTE,
+pct_itens_queda, slope_portfolio_medio, n_itens_portfolio, itens_por_pedido,
+total_pedidos, cv_pedidos, meses_sem_pedido_pre) têm SHAP > 0.01 e permanecem
+no modelo.
+
+Esta lista muda se o vencedor da Seção 6 do 04_modelo.ipynb mudar (o SHAP é
+recalculado por execução) — não é uma lista fixa, ver CLAUDE.md decisão 49
+sobre seleção dinâmica de modelo.
