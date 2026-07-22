@@ -36,3 +36,9 @@ VERDE = [
     "#d8f3dc", "#b7e4c7", "#95d5b2", "#74c69d",
     "#52b788", "#40916c", "#2d6a4f", "#1b4332",
 ]
+
+# === Scoring mensal — parâmetros provisórios, cravar com o cliente ===
+# Usados por scripts/scoring_mensal.py e scripts/gerar_relatorio.py — centralizados
+# aqui pra nunca divergirem entre os dois (ver CLAUDE.md, regra de propagação).
+PISO_RISCO   = 0.11   # probabilidade mínima pra um cliente entrar na corrida do ranking
+N_CAPACIDADE = 25      # quantos clientes/mês a equipe de retenção consegue contatar

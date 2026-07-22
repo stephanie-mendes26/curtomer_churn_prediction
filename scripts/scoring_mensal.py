@@ -26,7 +26,7 @@ PROJECT_ROOT = next(p for p in [Path.cwd()] + list(Path.cwd().parents) if (p / "
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src import db  # noqa: E402
-from src.config import PROCESSED_DIR, QUERIES_DIR, INICIO  # noqa: E402
+from src.config import PROCESSED_DIR, QUERIES_DIR, INICIO, PISO_RISCO, N_CAPACIDADE  # noqa: E402
 from src.features_EDA_pedidos import make_cliente_mes  # noqa: E402
 from src.features_comportamento import calc_features_comportamento_pre_cutoff  # noqa: E402
 from src.features_fidelidade import calc_features_fidelidade_pre_cutoff  # noqa: E402
@@ -35,9 +35,6 @@ from src.model_prep import preparar_X  # noqa: E402
 
 MODELO_PATH = PROCESSED_DIR / "modelo_churn.pkl"
 IMPUTACAO_PATH = PROCESSED_DIR / "imputacao_treino.pkl"
-
-PISO_RISCO   = 0.11   # piso de probabilidade — provisório, confirmar com o cliente
-N_CAPACIDADE = 25      # capacidade operacional de contato — provisório, cravar com o cliente
 
 
 def carregar_modelo():
@@ -106,6 +103,23 @@ def carregar_perfil_clientes() -> pd.DataFrame:
         .drop_duplicates(subset="CODIGO")
         .rename(columns={"CODIGO": "CLIENTE"})
     )
+
+
+def carregar_status_clientes(clientes_ids) -> pd.DataFrame:
+    """
+    STATUS ao vivo (Ativo/Inativo, único valores hoje no cadastro) do
+    CONTROLLER.dbo.PBI_Clientes — mesma tabela/lógica de validar_lista_alertas.py.
+    Usado pra nunca colocar na lista de alerta quem já está formalmente
+    desativado: não faz sentido acionar retenção pra quem já saiu.
+    """
+    ids = list(clientes_ids)
+    placeholders = ",".join(["?"] * len(ids))
+    sql = f"""
+    SELECT CODIGO AS CLIENTE, [STATUS] AS status_sistema
+    FROM CONTROLLER.dbo.PBI_Clientes
+    WHERE CODIGO IN ({placeholders})
+    """
+    return db.get_data(sql, params=ids)
 
 
 def carregar_clientes_para_score(cutoff_period: pd.Period):
@@ -233,8 +247,17 @@ def main():
         | (df_scores["sem_historico_itens"] == 1)
     ).astype(int)
 
+    # STATUS ao vivo do cadastro — quem já está Inativo nunca entra na lista,
+    # mas continua no parquet completo pra auditoria (nunca escondido, só
+    # marcado como inelegível).
+    status = carregar_status_clientes(df_scores["CLIENTE"].tolist())
+    df_scores = df_scores.merge(status, on="CLIENTE", how="left")
+    df_scores["status_sistema"] = df_scores["status_sistema"].fillna("Desconhecido")
+    ja_inativo = df_scores["status_sistema"] == "Inativo"
+
     acima_piso = df_scores["p_churn_calibrada"] >= PISO_RISCO
-    ranking = df_scores[acima_piso].sort_values("valor_em_risco", ascending=False)
+    elegivel = acima_piso & ~ja_inativo
+    ranking = df_scores[elegivel].sort_values("valor_em_risco", ascending=False)
     top_clientes = ranking.head(N_CAPACIDADE)["CLIENTE"]
     df_scores["entra_na_lista"] = df_scores["CLIENTE"].isin(top_clientes)
 
@@ -246,7 +269,7 @@ def main():
         "CLIENTE", "NOME", "categoria_cliente",
         "p_churn_bruta", "p_churn_calibrada",
         "receita_anual", "valor_em_risco", "decil",
-        "entra_na_lista", "historico_insuficiente",
+        "status_sistema", "entra_na_lista", "historico_insuficiente",
         "top_features_shap",
     ]
     scores_2026 = (
@@ -260,6 +283,7 @@ def main():
     lista_alerta.to_excel(PROCESSED_DIR / "clientes_alerta_modelo.xlsx", index=False)
 
     print(f"PISO_RISCO = {PISO_RISCO}  ->  {acima_piso.sum()} / {len(df_scores)} clientes acima do piso")
+    print(f"  dos quais {int((acima_piso & ja_inativo).sum())} já estão Inativo no cadastro — excluídos do ranking")
     print(f"N_CAPACIDADE = {N_CAPACIDADE}  ->  {df_scores['entra_na_lista'].sum()} clientes selecionados")
     print(f"scores_2026.parquet salvo: {len(scores_2026)} clientes")
     print(f"clientes_alerta_modelo.xlsx salvo: {len(lista_alerta)} clientes")

@@ -21,7 +21,7 @@ from sklearn.metrics import roc_auc_score
 PROJECT_ROOT = next(p for p in [Path.cwd()] + list(Path.cwd().parents) if (p / "src").exists())
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.config import PROCESSED_DIR  # noqa: E402
+from src.config import PROCESSED_DIR, PISO_RISCO, N_CAPACIDADE  # noqa: E402
 from src.model_prep import preparar_X  # noqa: E402
 
 OUT_PATH = PROJECT_ROOT / "reports" / "lista_alertas_churn.html"
@@ -122,6 +122,14 @@ def montar_dados():
     feats = pd.read_parquet(PROCESSED_DIR / "features_scoring_atual.parquet")
 
     n_total = len(scores)
+    # Só conta quem passaria do piso de risco de qualquer forma — um inativo
+    # com risco baixo nunca estaria na corrida, não faz sentido contá-lo como
+    # "excluído por estar inativo".
+    if "status_sistema" in scores.columns:
+        acima_piso = scores["p_churn_calibrada"] >= PISO_RISCO
+        n_ja_inativos = int((acima_piso & (scores["status_sistema"] == "Inativo")).sum())
+    else:
+        n_ja_inativos = 0
     sel = (
         scores[scores["entra_na_lista"]]
         .sort_values("valor_em_risco", ascending=False)
@@ -156,12 +164,13 @@ def montar_dados():
     summary = {
         "n_clientes": n_clientes,
         "n_total": n_total,
+        "n_ja_inativos": n_ja_inativos,
         "receita_total": round(sum(r["receita_anual"] for r in rows), 2),
         "valor_risco_total": round(sum(r["valor_em_risco"] for r in rows), 2),
         "risco_medio": round(sum(r["p"] for r in rows) / n_clientes, 1) if n_clientes else 0,
         "auc_roc": round(auc_roc * 100, 1),
-        "piso_risco": 11,
-        "n_capacidade": 25,
+        "piso_risco": round(PISO_RISCO * 100),
+        "n_capacidade": N_CAPACIDADE,
         "modelo_nome": modelo_nome,
     }
     return {"rows": rows, "summary": summary}
@@ -409,9 +418,12 @@ __DATA_JSON__
   document.getElementById("montagem-text").innerHTML =
     "<strong>Como esta lista foi montada:</strong> dos " + summary.n_total + " clientes avaliados neste " +
     "ciclo, só entram no cálculo os que passaram do piso mínimo de risco (" + summary.piso_risco +
-    "%). Todos são ordenados por <em>valor em risco</em> (risco × receita anual do próprio cliente — nunca " +
-    "uma média de categoria) e os " + summary.n_capacidade + " primeiros aparecem aqui, de acordo com a " +
-    "capacidade atual da equipe de retenção. Esse número é provisório e deve ser ajustado com o time comercial.";
+    "%) <strong>e que ainda estão Ativos no cadastro</strong> — clientes já desativados são excluídos " +
+    "automaticamente, não faz sentido acionar retenção pra quem já saiu (" + summary.n_ja_inativos +
+    " clientes nessa situação neste ciclo). Os restantes são ordenados por <em>valor em risco</em> " +
+    "(risco × receita anual do próprio cliente — nunca uma média de categoria) e os " + summary.n_capacidade +
+    " primeiros aparecem aqui, de acordo com a capacidade atual da equipe de retenção. Esse número é " +
+    "provisório e deve ser ajustado com o time comercial.";
 
   // ---- stat tiles ----
   const stats = [

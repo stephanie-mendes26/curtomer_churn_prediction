@@ -17,7 +17,7 @@ central_eto/
 │       ├── df_model_treino.parquet      # dataset de treino com features + target (gerado por 03_base_master)
 │       ├── df_model_teste.parquet       # dataset de teste com features + target (gerado por 03_base_master)
 │       ├── receita_cliente.parquet      # receita média mensal por cliente (gerado por calculo_receita)
-│       ├── scores_2026.parquet          # scoring completo — p_churn, valor_em_risco, decil (gerado por scripts/scoring_mensal.py)
+│       ├── scores_2026.parquet          # scoring completo — p_churn, valor_em_risco, decil, status_sistema (Ativo/Inativo ao vivo) (gerado por scripts/scoring_mensal.py)
 │       ├── clientes_alerta_modelo.xlsx  # lista final de alertas por valor em risco (top N_CAPACIDADE, gerado por scripts/scoring_mensal.py)
 │       ├── modelo_churn.pkl             # modelo vencedor (dinâmico — hoje XGBoost) + calibrador + lista de features, persistidos via pickle (gerado por 04_modelo.ipynb). Renomeado de modelo_lgbm.pkl em jul/2026 — nome antigo citava um modelo específico que deixou de ser sempre o vencedor
 │       ├── imputacao_treino.pkl         # medianas_cadencia_treino (cv_pedidos/intervalo_medio/max_intervalo) calculadas só no treino (gerado por 03_base_master.ipynb, jul/2026) — usado por scripts/scoring_mensal.py pra imputar dado ao vivo sem recalcular estatística fora do treino
@@ -56,7 +56,7 @@ central_eto/
 │
 └── src/
     ├── __init__.py
-    ├── config.py                        # constantes centralizadas: DATA_REF, CUTOFFs, paleta, thresholds
+    ├── config.py                        # constantes centralizadas: DATA_REF, CUTOFFs, paleta, thresholds, PISO_RISCO, N_CAPACIDADE
     ├── db.py                            # conexão com banco — usar db.get_data(sql) e db.test_connection()
     ├── features_EDA_pedidos.py          # make_cliente_mes() — agrega pedidos por cliente × mês
     ├── features_itens.py                # tendencia_slope() e calc_features_itens_pre_cutoff() (jul/2026) — recalcula slope/pct_itens_queda/n_itens_portfolio respeitando cutoff, evita vazamento (decisão 48)
