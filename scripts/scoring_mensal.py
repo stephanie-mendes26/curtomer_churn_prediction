@@ -241,10 +241,26 @@ def main():
 
     df_scores["valor_em_risco"] = df_scores["p_churn_calibrada"] * df_scores["receita_anual"]
     df_scores["decil"] = pd.qcut(df_scores["p_churn_calibrada"], 10, labels=False, duplicates="drop") + 1
-    df_scores["historico_insuficiente"] = (
-        (df_scores["historico_parcial_receita"] == 1)
-        | (df_scores["sem_historico_cadencia"] == 1)
+
+    # Duas ressalvas DIFERENTES, que antes viviam misturadas num único flag
+    # (historico_insuficiente) — achado do usuário (cliente 256: 29 meses de
+    # histórico muito regular, mas caiu na mesma bandeira genérica de um
+    # cliente com 1 mês de vida, tipo cliente 1641):
+    #
+    # - score_pouco_historico: o MODELO tem pouco comportamento pra aprender
+    #   (cliente novo/esparso) — o score em si é incerto.
+    # - receita_parcial: o CLIENTE tem histórico normal, mas parou de comprar
+    #   há tempo suficiente pra a janela de receita (12 meses) não pegar 12
+    #   meses reais — a receita_anual é extrapolada, mas o score continua
+    #   bem fundamentado (às vezes é justamente esse silêncio que empurra o
+    #   score pra cima).
+    df_scores["score_pouco_historico"] = (
+        (df_scores["sem_historico_cadencia"] == 1)
         | (df_scores["sem_historico_itens"] == 1)
+    ).astype(int)
+    df_scores["receita_parcial"] = df_scores["historico_parcial_receita"]
+    df_scores["historico_insuficiente"] = (
+        (df_scores["score_pouco_historico"] == 1) | (df_scores["receita_parcial"] == 1)
     ).astype(int)
 
     # STATUS ao vivo do cadastro — quem já está Inativo nunca entra na lista,
@@ -270,6 +286,7 @@ def main():
         "p_churn_bruta", "p_churn_calibrada",
         "receita_anual", "valor_em_risco", "decil",
         "status_sistema", "entra_na_lista", "historico_insuficiente",
+        "score_pouco_historico", "receita_parcial",
         "top_features_shap",
     ]
     scores_2026 = (

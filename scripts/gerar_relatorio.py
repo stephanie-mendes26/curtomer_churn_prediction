@@ -156,7 +156,8 @@ def montar_dados():
             "tier_label": tier_label,
             "receita_anual": round(float(r["receita_anual"]), 2),
             "valor_em_risco": round(float(r["valor_em_risco"]), 2),
-            "historico_insuficiente": bool(r["historico_insuficiente"]),
+            "score_pouco_historico": bool(r["score_pouco_historico"]),
+            "receita_parcial": bool(r["receita_parcial"]),
             "motivo": motivo,
         })
 
@@ -360,7 +361,8 @@ TEMPLATE = r"""<!doctype html>
         <tbody id="table-body"></tbody>
       </table>
     </div>
-    <p class="footnote">† Histórico de compra curto ou parcial — o score deve ser interpretado com mais cautela (ver metodologia abaixo).</p>
+    <p class="footnote">† Cliente novo ou com poucos meses de compra — o <strong>score</strong> tem menos comportamento pra se basear, interpretar com mais cautela.</p>
+    <p class="footnote">‡ Cliente parou de comprar há tempo suficiente pra a <strong>receita anual</strong> ser estimada a partir de poucos meses recentes (não é uma soma real de 12 meses) — o score em si não é afetado por isso.</p>
   </section>
 
   <section class="card methodology">
@@ -604,7 +606,10 @@ __DATA_JSON__
 
     const tdIdx = document.createElement("td"); tdIdx.textContent = String(i + 1);
     const tdNome = document.createElement("td"); tdNome.className = "nome";
-    tdNome.textContent = r.nome + (r.historico_insuficiente ? " †" : "");
+    let marcadores = "";
+    if (r.score_pouco_historico) marcadores += " †";
+    if (r.receita_parcial) marcadores += " ‡";
+    tdNome.textContent = r.nome + marcadores;
     const tdCat = document.createElement("td"); tdCat.textContent = r.categoria;
     const tdRisco = document.createElement("td");
     const pill = document.createElement("span");
