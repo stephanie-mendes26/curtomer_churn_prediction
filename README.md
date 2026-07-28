@@ -130,8 +130,7 @@ central_eto/
 ├── data/processed/              # outputs dos notebooks e scripts
 ├── docs/
 │   ├── estrutura.txt            # árvore detalhada de todos os arquivos
-│   ├── variaveis.txt            # dicionário completo das features
-│   └── threshold_churn          # referência de thresholds
+│   └── variaveis.txt            # dicionário completo das features
 ├── notebooks/                   # análise e treino do modelo (roda raramente)
 ├── scripts/
 │   ├── scoring_mensal.py        # pipeline de inferência — roda mensalmente, dado ao vivo

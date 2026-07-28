@@ -19,8 +19,7 @@ central_eto/
 ├── data/processed/                # outputs dos notebooks e scripts — nunca editar à mão
 ├── docs/
 │   ├── estrutura.txt             # árvore detalhada do projeto
-│   ├── variaveis.txt             # dicionário completo das features
-│   └── threshold_churn
+│   └── variaveis.txt             # dicionário completo das features
 ├── notebooks/
 │   ├── 01_pedidos_eda.ipynb      # CONCLUÍDO
 │   ├── 02_clientes_eda.ipynb     # PAUSADO
@@ -32,6 +31,7 @@ central_eto/
 ├── scripts/
 │   ├── scoring_mensal.py         # pipeline de INFERÊNCIA — roda mensalmente, dado ao vivo
 │   └── gerar_relatorio.py        # gera reports/lista_alertas_churn.html do zero
+├── exploratorio/                 # scripts de teste rápido de hipótese (Pearson/MI), não fazem parte do pipeline mas ficam guardados — nunca em pasta temp
 ├── queries/
 ├── reports/
 │   └── lista_alertas_churn.html  # gerado por scripts/gerar_relatorio.py — nunca editar à mão
@@ -389,6 +389,16 @@ Granularidade: um registro por cliente. Dataset final para modelagem.
     - `scoring_mensal.py` agora calcula `score_pouco_historico` (= `sem_historico_cadencia` OU `sem_historico_itens`) e `receita_parcial` (= `historico_parcial_receita`) como colunas separadas em `scores_2026.parquet` — `historico_insuficiente` continua existindo como o "OU" das duas, pra quem só precisa saber "tem alguma ressalva", mas o relatório usa as duas separadas.
     - `gerar_relatorio.py` usa dois marcadores diferentes no nome do cliente — `†` pra `score_pouco_historico`, `‡` pra `receita_parcial` (um cliente pode ter os dois, como o 1641) — com uma linha de rodapé explicando cada um.
     - Validado: cliente 256 mostra só `‡` (score confiável, só a receita é estimada); cliente 1641 mostra `†‡` (os dois problemas de fato se aplicam a ele — é novo E a receita é de 1 mês só).
+59. **PENDÊNCIA — ainda pensando: simulação rápida de `razao_recencia` e `std_intervalo` (jul/2026), sem mexer no pipeline.** Motivado pelos casos reais do cliente 256 (intervalo_medio confiável) e do cliente 799 (intervalo_medio enganoso — gaps de `[1, 24]` meses, média 12,5 não representa nenhum padrão real). Teste univariado (Pearson + MI contra `churn` real, só no treino, mesma metodologia da Seção 2 do `04_modelo.ipynb` — script descartável, nada persistido):
+
+    | Feature | Cobertura | Pearson | MI | Referência mais próxima |
+    |---|---|---|---|---|
+    | `razao_recencia` = `meses_sem_pedido_pre / intervalo_medio` | 610/610 | +0.573 | **0.251** | `meses_sem_pedido_pre` sozinha: 0.616 / 0.230 |
+    | `std_intervalo` (desvio padrão dos gaps) | 412/610 (68%) | +0.165 | **0.035** | `intervalo_medio` sozinha: 0.141 / 0.122 |
+
+    - **`razao_recencia`:** MI mais alto que `meses_sem_pedido_pre` isolada, sem buraco de cobertura — sinal de que carrega informação incremental real, candidata de baixo risco pra um retreino futuro.
+    - **`std_intervalo`:** MI bem mais baixo que `intervalo_medio` isolada, e só cobre 68% da base (precisa de ≥3 meses ativos) — sinal fraco isoladamente. Ressalva: é um teste univariado, não descarta que a árvore encontre interação com outras features; só não há evidência forte pra priorizar sozinha.
+    - **Decisão:** ainda não implementado — usuário quer pensar mais antes de comprometer um retreino completo (03_base_master → 04_modelo → scoring_mensal → relatório). Registrado aqui pra não perder o raciocínio quando a decisão for retomada.
 
 ---
 
@@ -399,17 +409,17 @@ Granularidade: um registro por cliente. Dataset final para modelagem.
 2. ~~Re-rodar `04_modelo.ipynb` do início com os parquets atualizados e protocolo limpo~~ — CONCLUÍDO (jul/2026)
 3. ~~Concluir Seção 9 — SHAP~~ — CONCLUÍDO (decisão de features documentada)
 4. ~~Escrever e rodar Seção 10 — aplicação no snapshot atual~~ — CONCLUÍDO (`scores_2026.parquet` + `clientes_alerta_modelo.xlsx` gerados)
-5. Validar `clientes_alerta_modelo.xlsx` (25 clientes) com a equipe comercial — lista gerada pelo modelo corrigido (XGBoost, pós-correção de vazamento — decisão 48)
-6. Revisar o outlier de receita anualizada (decisão 42) caso apareça no top da lista de alertas
-7. Cravar `PISO_RISCO` e `N_CAPACIDADE` com o cliente (atualmente 0.11 e 25, provisórios)
+5. ~~Validar `clientes_alerta_modelo.xlsx` (25 clientes) com a equipe comercial~~ — CONCLUÍDO (jul/2026)
+6. Revisar o outlier de receita anualizada (decisão 42) — **decisão do usuário (jul/2026): não mexer agora.** A mesma limitação de fundo do item 15 (perda de distribuição interna por soma telescópica) se aplica aqui — a janela de 12 meses de receita também "acha" variabilidade real. Voltar a pensar neste item só depois de fechar a decisão do item 15.
+7. Cravar `PISO_RISCO` e `N_CAPACIDADE` com o cliente — ficou mais complexo depois da reunião de jul/2026 (ver seção "Reunião jul/2026" abaixo): `N_CAPACIDADE` pode virar duas cotas separadas (baixo vs. médio+, dashboard duplicado) em vez de uma lista única de 25; `PISO_RISCO` (hoje 0.11 global) está sendo reconsiderado como piso por categoria em vez de valor único. Nenhuma das duas está fechada.
 8. ~~Separar treino (notebook) de inferência (script)~~ — CONCLUÍDO (decisão 45): `04_modelo.ipynb` agora só treina; `scripts/scoring_mensal.py` criado como esqueleto
 9. ~~Passo 1: persistir modelo + calibrador treinados em `data/processed/modelo_churn.pkl`~~ — CONCLUÍDO (jul/2026)
 10. ~~Corrigir vazamento de dado nas features de item + tornar seleção de modelo dinâmica~~ — CONCLUÍDO (decisões 48 e 49, jul/2026): XGBoost agora é o modelo oficial, AUC-ROC honesta ~0.89 (era ~0.92 com vazamento)
 11. ~~Passo 2 — extração mecânica: mover a lógica de comportamento/fidelidade/preparo do X pra `src/`~~ — CONCLUÍDO (decisão 50, jul/2026): `src/features_comportamento.py`, `src/features_fidelidade.py`, `src/model_prep.py`. Validado como refatoração pura (parquets/modelo/scores idênticos antes/depois).
 12. ~~Passo 2 — parte que falta: features "ao vivo" no scoring mensal~~ — **CONCLUÍDO (decisão 54, jul/2026).**
 13. Depois disso: agendar `scripts/scoring_mensal.py` (Windows Task Scheduler) pra rodar mensalmente, após o fechamento do mês (decisão 47)
-14. Re-rodar `validar_lista_alertas.py` contra a lista atual (pós-correção) — a validação anterior foi feita com os scores do modelo com vazamento
-15. **(baixa prioridade, registrado — decisão 53):** avaliar `std(diffs)`/IQR das diferenças entre pedidos e/ou razão `meses_sem_pedido_pre / intervalo_medio` como complemento à limitação matemática de `intervalo_medio`
+14. ~~Re-rodar `validar_lista_alertas.py` contra a lista atual (pós-correção)~~ — CONCLUÍDO (jul/2026)
+15. **AINDA PENSANDO (decisões 53 e 59):** simulação já mostrou `razao_recencia` (`meses_sem_pedido_pre/intervalo_medio`) com sinal promissor (MI 0.251 > `meses_sem_pedido_pre` isolada) e `std_intervalo` com sinal fraco isoladamente (MI 0.035, cobertura 68%). Falta decidir se vale comprometer um retreino completo (03_base_master → 04_modelo → scoring_mensal → relatório) — não é uma tarefa pequena, é a mesma categoria de esforço do Passo 1/2.
 
 ### P2 — Subfragmentação da categoria "Baixo" (pendente)
 Categoria atual "baixo" mistura clientes recorrentes de baixo volume com clientes sazonais (compra 1x/ano).
@@ -426,14 +436,166 @@ Categoria atual "baixo" mistura clientes recorrentes de baixo volume com cliente
 
 ---
 
+## Reunião jul/2026 — Implementar Projeto (achados e pedidos do cliente)
+
+Reunião com a empresa (cliente do projeto). Registrado como recebido, ainda não
+validado tecnicamente — próximo passo é cruzar com o dado real.
+
+1. **Achado do cliente:** boa parte dos alertas gerados hoje são de clientes
+   `categoria baixo`, com poucos pedidos e base de compra muito irregular. Pedido
+   direto: melhorar essa previsão especificamente pra esse segmento.
+2. **Hipótese de negócio (a validar):** clientes `baixo` costumam fazer pedidos
+   **anuais**, não porque estão "sumindo", mas porque o material esterilizado do
+   pedido anterior **venceu** e precisa ser reposto:
+   - Esterilização a **vapor** → validade de **6 meses**
+   - Esterilização a **óxido de etileno** → validade de **2 anos**
+   - Ou seja, o "intervalo entre pedidos" desses clientes pode não ser sinal de
+     churn — pode ser o **ciclo de validade do produto**, um fator técnico/
+     regulatório, não comercial. Isso mudaria completamente a leitura de
+     `intervalo_medio`/`max_intervalo` pra esse segmento.
+3. **Ideia proposta pelo cliente:** cruzar dado de **alvará/fiscalização** de
+   algumas empresas — a fiscalização sanitária exige material com validade em
+   dia, então isso pode ajudar a prever *quando* um cliente `baixo` vai
+   precisar repor, de forma mais precisa que uma média genérica de intervalo.
+4. **Pedido novo, mesma reunião — segmentação por importância:** o cliente
+   (empresa) considera clientes de categoria `baixo` "pouco importantes".
+   **Decisão fechada (jul/2026):** duplicar o dashboard
+   (`reports/lista_alertas_churn.html`) em duas listas separadas, cada uma com
+   sua própria cota de `N_CAPACIDADE=25` — uma só com `categoria_pedido ==
+   baixo`, outra só com os demais (`médio`/`alto`/`premium`). Corte simples
+   por categoria, **não** por "histórico confiável" (essa ideia foi descartada
+   — o critério final é só a categoria). Ainda não implementado — falta mexer
+   em `scoring_mensal.py` (ranking em vez de um `top_N` único) e em
+   `gerar_relatorio.py` (duas seções/tabelas no HTML).
+
+**Metodologia acordada pra testar a hipótese de esterilização (jul/2026):**
+antes de qualquer mudança no pipeline, rodar um script rascunho descartável de
+Pearson + MI contra o `churn` real — o mesmo protocolo já usado pra avaliar
+`razao_recencia`/`std_intervalo` (decisão 59).
+
+**Teste rodado no mesmo dia — resultado: hipótese não se sustenta nesse teste.**
+O mapeamento SERVICO → tipo de esterilização acabou não sendo necessário: a
+coluna `TIPO_PED` de `dbo.PBI_DESEMPENHO_MATERIAL` já vem com só 2 valores —
+`VAPOR` (76 clientes, 6 meses de validade) e `ÓXIDO` (918 clientes, 2 anos) —
+direto no banco, sem precisar extrair de texto. Com isso, testado (script
+descartável em `scratchpad/`, nada persistido, só treino, features pré-CUTOFF_TREINO):
+
+| Feature | Pearson | MI | Recorte |
+|---|---|---|---|
+| `pct_itens_oxido` (composição do portfólio) | +0.065 | 0.015 | treino completo (n=610) |
+| `pct_itens_oxido` | +0.080 | **0.000** | só `categoria_pedido=baixo` (n=494) |
+| `razao_recencia_validade` = `meses_sem_pedido_pre / validade_esperada_meses` | +0.578 | 0.242 | treino completo |
+| `razao_recencia_validade` | +0.557 | 0.196 | só `baixo` |
+| `meses_sem_pedido_pre` sozinha (referência) | +0.616 | 0.239 | treino completo |
+
+Composição do portfólio (vapor vs. óxido) sozinha não carrega quase nenhuma
+informação sobre churn, e dentro de `baixo` (o segmento que motivou a
+pergunta) o MI vai a zero. Ajustar a recência pela validade esperada do
+material fica empatado com o `meses_sem_pedido_pre` que já está no modelo —
+não melhora. **Ressalva:** esse teste é agregado (Pearson/MI geral) e não
+testa especificamente a alegação da empresa de que esses casos viram **falsos
+positivos** (risco alto mas sem churn de fato) — um teste mais direcionado
+seria comparar a composição de esterilização só entre os `baixo` com
+`meses_sem_pedido_pre` alto, separando `churn=0` de `churn=1`. Não feito
+ainda — registrar como próximo passo se o assunto for retomado.
+
+**CORREÇÃO DE ESCOPO DA HIPÓTESE (jul/2026, mesmo dia):** o recorte
+`categoria_pedido == baixo` usado no teste acima é mais largo do que a
+hipótese real da empresa. O que foi dito na reunião não é sobre todo cliente
+`baixo` — é especificamente sobre o subconjunto que pede **~1x/ano, de forma
+periódica, com datas parecidas entre os anos** (reposição por vencimento de
+validade, não sazonalidade genérica). Esse recorte mais largo pode ter
+diluído qualquer sinal real que exista só no subgrupo periódico. **Ainda não
+feito:** definir um critério que isole esse subgrupo especificamente (ex.:
+baixa variância no mês-do-ano do pedido entre anos, ou `intervalo_medio`/
+`max_intervalo` próximos de 12) e só então re-testar `tipo_serv`/`tipo_ped`
+dentro dele. Os scripts (`exploratorio/explorar_colunas_material.py` e
+`exploratorio/testar_ciclo_esterilizacao.py`, guardados no repositório, não
+descartados) já têm essa ressalva anotada no cabeçalho.
+
+**Teste do subgrupo refinado, rodado no mesmo dia (`exploratorio/definir_cliente_periodico.py`) — achado contra-intuitivo, hipótese não sustentada.**
+Critério: circstd (desvio padrão circular — trata dez/jan como vizinhos, não
+extremos) do mês do pedido, calculado sobre clientes `baixo` com pedido em 2
+anos distintos na janela pré-CUTOFF_TREINO (259 de 494 elegíveis; a janela
+2023-2024 só permite 2 pontos por cliente — limitação de amostra registrada).
+Resultado, testado em 4 limiares (estável, não é artefato de um único corte):
+
+| Limiar circstd | Periódico anual: n / churn | Resto: n / churn |
+|---|---|---|
+| 1,5 meses | 18 / 50,0% | 241 / 18,7% |
+| 2,0 meses | 32 / 43,8% | 227 / 17,6% |
+| 2,5 meses | 67 / 46,3% | 192 / 12,0% |
+| 3,0 meses | 111 / 34,2% | 148 / 10,8% |
+
+**O subgrupo que pede em datas parecidas todo ano churna 2-3× MAIS que o
+resto, não menos.** É o oposto do que a hipótese da reunião previa (esses
+clientes seriam "falsos positivos" por causa do ciclo de validade do
+material). Padrão consistente do menor recorte (n=18) até o maior (n=111).
+Dentro do subgrupo periódico, `tipo_ped` não teve como ser testado de forma
+confiável (portfólio 100% óxido nos casos mais estritos — sem variância pra
+correlacionar).
+
+**Reforço estatístico (mesmo dia, a pedido do usuário) — intervalo de
+confiança de Wilson + teste exato de Fisher por limiar, script atualizado em
+`exploratorio/definir_cliente_periodico.py`:**
+
+| Limiar | Periódico (IC 95%) | Resto (IC 95%) | Odds Ratio | p (Fisher) |
+|---|---|---|---|---|
+| 1,5 meses | 50,0% [29,0–71,0%] | 18,7% [14,3–24,1%] | 4,36 | 0,0042 |
+| 2,0 meses | 43,8% [28,2–60,7%] | 17,6% [13,2–23,1%] | 3,64 | 0,0018 |
+| 2,5 meses | 46,3% [34,9–58,1%] | 12,0% [8,1–17,3%] | 6,33 | <0,0001 |
+| 3,0 meses | 34,2% [26,1–43,5%] | 10,8% [6,8–16,8%] | 4,29 | <0,0001 |
+
+Significativo em todos os 4 limiares (Fisher exato, escolhido em vez de
+qui-quadrado por causa do n pequeno — a aproximação do qui-quadrado fica
+instável com células pequenas como n=18), com ICs de Wilson que não se
+sobrepõem entre os grupos. **Não é ruído de amostra pequena** — o efeito é
+estatisticamente real neste dataset.
+
+**Conclusão provisória, agora com suporte estatístico (não só descritivo):**
+os dados não sustentam a hipótese literal da reunião; pelo contrário,
+regularidade de datas nesse segmento é um sinal de risco real e mensurável
+(hipótese ainda especulativa pro *porquê*: ex. cliente cortando fornecedor de
+forma "educada"/planejada), não um artefato de ciclo de reposição. **Ainda
+não comunicar essa conclusão ao cliente** — significância estatística não
+elimina a ressalva de confusão: esses 111 podem ser sistematicamente
+diferentes dos outros `baixo` em receita, tempo de casa etc., e isso não foi
+controlado (é correlação univariada, não um modelo multivariado). Registrar
+como achado a discutir antes de qualquer decisão de produto ou de retreino.
+
+**Conexão com o que já observamos nesta sessão (não confirmada, só uma pista):**
+o cliente 799 (`ON-HIGHWAY BRASIL LTDA.`) tem exatamente esse padrão — comprou 2
+meses seguidos, sumiu por **24 meses**, voltou a comprar. Um gap de ~24 meses
+bate seco com o ciclo de validade do material esterilizado a óxido de etileno
+(2 anos) citado pelo cliente. Vale conferir se o(s) item(ns) que ele comprou são
+desse tipo de esterilização antes de tirar qualquer conclusão.
+
+**Passos técnicos derivados (ainda não iniciados):**
+- Verificar se `SERVICO` (nome do item, em `df_base`/`queries/base_pedidos.sql`)
+  permite identificar o tipo de esterilização (vapor vs. óxido), ou se precisa
+  de uma tabela de mapeamento nova vinda do cliente.
+- Se der pra mapear: testar se o **tipo de esterilização predominante do
+  portfólio do cliente** explica parte da "irregularidade" hoje atribuída à
+  categoria `baixo` — pode virar uma feature nova (ex.: "ciclo de validade
+  esperado do portfólio") em vez de tratar tudo com o mesmo `intervalo_medio`.
+- Avaliar viabilidade de dado de alvará/fiscalização como fonte externa — fonte,
+  formato, se está disponível pra cruzar por CNPJ/cliente.
+- Isso se conecta diretamente com o **P2 — Subfragmentação da categoria "Baixo"**
+  (já pendente): o critério de sazonalidade cogitado ali (`n_meses_ativos /
+  janela_meses ≥ 0.4`) pode precisar incorporar o ciclo de validade em vez de só
+  frequência bruta.
+
+---
+
 ## Perguntas em Aberto
 
 - [ ] Subfragmentação do "baixo": validar threshold `razao_atividade ≥ 0.4` com o cliente
 - [ ] Qualidade da variável `SETOR`: verificar cardinalidade e cobertura antes de usar
-- [ ] Custo assimétrico: confirmar com o cliente a proporção FN/FP para fixar threshold em produção (atualmente usando F2 como proxy — FN pesa 2× FP)
+- [x] **Custo assimétrico — já resolvido, item ficou obsoleto na lista (decisão 36).** O cliente não soube mensurar custo de perder cliente vs. custo de retenção, e a decisão 36 já tirou isso da equação: o threshold é governado por `N_CAPACIDADE` (capacidade operacional), não por proporção de custo FN/FP. F2 continua só como proxy interno pra Seção 7, não vai pra produção como está (ver decisão 31). Nada a confirmar com o cliente aqui — mantido só como referência histórica de por que não perseguimos esse número.
 - [ ] **Capacidade operacional de retenção (BLOQUEADOR PARA PRODUÇÃO):** quantos clientes a equipe consegue contatar por mês? Esse número define o threshold via `n_alertas` na tabela de sweep (Seção 7) — substitui o F2-ótimo calibrado no teste, que não deve ir para produção diretamente (ver decisão 31)
-- [ ] **ROI do modelo:** coletar do cliente (a) ticket médio mensal por cliente e (b) custo de uma ação de retenção → `ROI = churners_capturados × ticket_médio - n_alertas × custo_retenção`. A tabela de sweep vira simulador de ROI por threshold.
-- [ ] **`N_CAPACIDADE` (BLOQUEADOR DO CORTE FINAL):** quantos clientes/mês a pessoa que trabalha os alertas consegue contatar. Placeholder atual = 25. Cravar com o cliente antes de fixar o output final.
+- [x] **ROI do modelo — fechado como "não dá pra fixar" (confirmado com o usuário, jul/2026):** ticket médio e custo de retenção variam demais entre clientes/segmentos pra virar uma constante única (`ROI = churners_capturados × ticket_médio - n_alertas × custo_retenção` não é viável com inputs fixos). Abordagem que fica valendo: a tabela de sweep (Seção 7) como simulador — o cliente lê o trade-off recall/precisão por `n_alertas`, sem exigir um número de custo fechado.
+- [ ] **`N_CAPACIDADE` (BLOQUEADOR DO CORTE FINAL):** quantos clientes/mês a pessoa que trabalha os alertas consegue contatar. Placeholder atual = 25. **Complicou depois da reunião de jul/2026** — pode virar duas cotas separadas (baixo vs. médio+, ver seção "Reunião jul/2026"). Cravar com o cliente antes de fixar o output final.
+- [ ] **`PISO_RISCO` por categoria (jul/2026) — SEGURADO, precisa de análise antes.** Usuário considera 0.11 global baixo demais e quer um piso por categoria em vez de valor único global — mas explicitamente pediu pra **não decidir ainda**: primeiro precisa analisar estatisticamente (ex.: distribuição de `p_calibrada` por categoria) antes de cravar um piso por segmento. Não implementar nada até essa análise ser feita.
 
 ---
 
@@ -455,3 +617,119 @@ Respostas prontas para perguntas frequentes sobre o modelo:
 
 **"Qual o retorno financeiro?"**
 → `ROI = churners_capturados × ticket_médio - n_alertas × custo_retenção`. Precisa de dois números do cliente. Com eles, a tabela de sweep vira simulador de ROI — troca threshold e mostra como o lucro muda.
+
+---
+
+## O Que Aprender (glossário técnico crescente)
+
+Seção pedagógica — conceitos estatísticos/técnicos que apareceram no projeto e
+o usuário pediu pra registrar com explicação, não só o resultado. Cresce ao
+longo do tempo, cada entrada fica isolada pra ser lida sozinha depois.
+
+### Por que o projeto evita `statsmodels` (jul/2026)
+
+Pergunta do usuário, citando minha própria fala: *"statsmodels não está
+instalado (e o projeto já evita essa dependência de propósito — decisão 14).
+Vou implementar o intervalo de Wilson na mão e usar o teste exato de Fisher
+do scipy... sem adicionar dependência nova."*
+
+Não é que `statsmodels` seja ruim — é uma biblioteca completa e consolidada
+pra estatística clássica (regressões com inferência formal, séries
+temporais, testes de hipótese prontos). O motivo de evitar aqui é outro:
+**cada dependência nova é custo de manutenção** (compatibilidade de versão,
+mais superfície pra quebrar, mais tempo de instalação) — e tudo que
+precisamos até agora (VIF na decisão 14, IC de proporção agora) já dá pra
+fazer com `scipy`/`scikit-learn`, que já estão no `requirements.txt` por
+outros motivos. Adicionar uma biblioteca inteira só por 1-2 funções é o tipo
+de coisa que o próprio `CLAUDE.md` já desencoraja em outro contexto ("não
+adicionar abstrações além do necessário").
+
+**Trade-off honesto, não é decisão sem custo:** `statsmodels` teria essas
+funções prontas e testadas em produção por milhares de usuários (ex.:
+`statsmodels.stats.proportion.proportion_confint`, ou um `Logit(...).fit()`
+com `.summary()` que já devolve p-valor e IC de cada coeficiente de graça).
+Reimplementar na mão (como fiz o Wilson) tem risco real de bug sutil numa
+fórmula que uma lib madura já blindou — pra 1-2 usos ocasionais o risco vale
+a pena pela economia de dependência; se o projeto passasse a fazer inferência
+estatística clássica o tempo todo, aí a conta inverteria e valeria trazer
+`statsmodels` de vez.
+
+### Intervalo de confiança — a ideia geral
+
+A taxa de churn observada numa amostra (ex.: 50% em 18 clientes) não é "a
+verdade" — é uma estimativa. Se você pudesse repetir o processo com outra
+amostra parecida, o número ia variar. O intervalo de confiança (IC) responde:
+*"com 95% de confiança, o valor real da população está nessa faixa."*
+Quanto menor o `n`, mais largo o IC (mais incerteza) — por isso o grupo de
+18 clientes deu um IC enorme ([29%, 71%]) e o de 111 deu um IC bem mais
+estreito ([26%, 44%]).
+
+### Por que Wilson e não a fórmula "normal" de IC de proporção
+
+A fórmula mais comum ensinada em curso básico (`p ± z·√(p(1-p)/n)`, chamada
+de Wald) assume que a distribuição da proporção se aproxima de uma normal —
+só funciona bem com `n` grande e `p` longe de 0%/100%. Com `n` pequeno ou
+`p` extremo, ela pode devolver um IC absurdo (ex.: limite inferior negativo)
+ou subestimar a incerteza real. **Wilson** corrige isso invertendo
+matematicamente o teste de hipótese da proporção em vez de aproximar
+direto — fica bem-comportado mesmo com `n` pequeno, e é o método recomendado
+pela literatura estatística moderna (Agresti & Coull, 1998) no lugar do
+Wald tradicional. Outras variações que existem, se quiser comparar depois:
+- **Clopper-Pearson** — "exato", mais conservador (IC mais largo, garante
+  cobertura mas às vezes exagera)
+- **Agresti-Coull** — uma versão simplificada do Wilson, quase idêntica na
+  prática
+- **Jeffreys** — versão bayesiana, usa uma distribuição Beta como prior
+
+Wilson é o padrão de bom senso pra maioria dos casos — não é o mais
+conservador nem o mais simples, é o equilíbrio.
+
+### Fisher exato vs. qui-quadrado
+
+Os dois testam a mesma pergunta: *"essas duas proporções são diferentes de
+um jeito que não é só acaso?"* — formalmente, testam independência numa
+tabela 2×2 (aqui: periódico/resto × churn/não-churn).
+
+- **Qui-quadrado** é uma **aproximação**: assume que a contagem esperada em
+  cada célula da tabela é grande o suficiente (regra de bolso: todas ≥5)
+  pra estatística de teste seguir uma distribuição qui-quadrado. Com célula
+  pequena (nosso caso: só 18 clientes no grupo periódico no limiar mais
+  estrito) essa aproximação fica furada — o p-valor que ela devolve pode
+  estar errado.
+- **Fisher exato** não aproxima nada — calcula a probabilidade **exata** de
+  observar uma tabela tão ou mais extrema que a observada, dado os totais
+  fixos (via distribuição hipergeométrica). Por isso "exato" no nome.
+  Sempre válido, mesmo com `n` pequeno — é o motivo de ser o padrão quando
+  alguma célula é pequena.
+
+**Regra prática:** célula esperada ≥5 em todas → qui-quadrado tá liberado
+(mais rápido, mais comum na literatura). Alguma célula <5 → Fisher exato,
+sempre seguro.
+
+**Sobre o odds ratio que o Fisher também devolveu (ex.: 4,36):** é a razão
+entre a *chance* (odds, não probabilidade) de churn no grupo periódico vs.
+no resto — `OR=1` significa "nenhuma diferença". Não confundir com "4,36×
+mais provável" em termos de probabilidade pura — isso seria **risco
+relativo**, uma métrica diferente que só coincide com o odds ratio quando o
+evento é raro. Confusão clássica, vale sempre checar qual das duas está
+sendo reportada.
+
+### Pergunta respondida: "a conclusão é que quem pede com regularidade tem mais chance de churn?"
+
+**Sim, mas com escopo específico, não uma regra geral.** O achado é: dentro
+da categoria `baixo` (poucos pedidos), quem pede em datas parecidas todo ano
+(baixa variância circular no mês do pedido) tem taxa de churn 3-4× maior que
+quem é irregular, e isso é estatisticamente significativo neste dataset (não
+é ruído de amostra pequena). Três ressalvas que continuam de pé mesmo com a
+significância:
+1. **É correlação, não causa** — não sabemos *por que* ainda (hipótese
+   especulativa: cliente cortando fornecedor de forma "educada"/planejada).
+2. **Sem controle de confusão** — os 111 clientes periódicos podem ser
+   sistematicamente diferentes dos outros `baixo` em receita, tempo de casa
+   etc., e isso não foi isolado (é teste univariado, não um modelo
+   multivariado).
+3. **Não validado fora da amostra de treino** — é um padrão só no
+   `df_model_treino`, nunca checado no teste nem em dado novo.
+Por isso a regra continua: achado registrado, não comunicado ao cliente,
+não implementado como feature — falta pelo menos o passo 2 (controlar por
+receita/tempo de casa) antes de qualquer decisão de produto.

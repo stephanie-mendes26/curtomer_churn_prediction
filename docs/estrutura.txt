@@ -25,8 +25,7 @@ central_eto/
 │
 ├── docs/
 │   ├── estrutura.txt                    # este arquivo — atualizar sempre que mudar algo
-│   ├── variaveis.txt                    # dicionário completo das features do modelo
-│   └── threshold_churn                  # referência dos thresholds de churn por categoria
+│   └── variaveis.txt                    # dicionário completo das features do modelo
 │
 ├── notebooks/
 │   ├── 01_pedidos_eda.ipynb             # CONCLUÍDO — EDA de pedidos, cria cliente_mes e cliente_fidelidade
@@ -40,6 +39,12 @@ central_eto/
 ├── scripts/
 │   ├── scoring_mensal.py                # pipeline de INFERÊNCIA — puxa pedidos/cadastro frescos do banco a cada execução, recalcula features (comportamento/fidelidade/itens) até o último mês fechado, carrega modelo_churn.pkl (modelo dinâmico) + imputacao_treino.pkl. Passo 2 100% concluído (jul/2026) — testado contra o banco real. Chama gerar_relatorio() no final — uma única execução atualiza scores, Excel e o relatório HTML
 │   └── gerar_relatorio.py               # gera reports/lista_alertas_churn.html do ZERO a cada chamada (nunca edita o arquivo existente — decisão 55, jul/2026). Lê scores_2026.parquet + features_scoring_atual.parquet; AUC-ROC e contagem total sempre recalculadas, nunca hardcoded
+│
+├── exploratorio/
+│   ├── explorar_colunas_material.py     # lista valores distintos de AUTO_CLV/TIPO_SERV/TIPO_PED/ADEQUAR (achou TIPO_PED = VAPOR/ÓXIDO direto no banco, jul/2026)
+│   ├── testar_ciclo_esterilizacao.py    # testa Pearson/MI de tipo de esterilização vs churn — sinal fraco no recorte "categoria=baixo", recorte precisa ser refinado (ver CLAUDE.md, "Reunião jul/2026")
+│   ├── definir_cliente_periodico.py     # isola subgrupo "baixo" que pede ~1x/ano em datas parecidas (circstd do mês) — achado contra-intuitivo: esse subgrupo CHURNA MAIS, não menos (ver CLAUDE.md, "Reunião jul/2026")
+│   └── testar_razao_recencia.py         # Pearson/MI de razao_recencia e std_intervalo vs churn — reconstrução do teste da decisão 59 (não tinha sido salvo na 1ª rodada)
 │
 ├── queries/
 │   ├── base_pedidos.sql                 # query principal de pedidos (df_base)
